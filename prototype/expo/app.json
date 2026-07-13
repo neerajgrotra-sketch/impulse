@@ -1,0 +1,70 @@
+{
+  "expo": {
+    "name": "Impulse",
+    "slug": "impulse-blueprint",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "impulse-blueprint",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0D0F1A",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.impulse.blueprint",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Impulse listens to your answers so it can understand you.",
+        "NSSpeechRecognitionUsageDescription": "Impulse transcribes your voice to build your Human Blueprint."
+      }
+    },
+    "android": {
+      "package": "com.impulse.blueprint",
+      "adaptiveIcon": {
+        "backgroundColor": "#0D0F1A",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0D0F1A",
+          "image": "./assets/icon.png",
+          "imageWidth": 120
+        }
+      ],
+      "expo-secure-store",
+      "expo-audio",
+      "expo-asset",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Impulse listens to your answers so it can understand you.",
+          "speechRecognitionPermission": "Impulse transcribes your voice to build your Human Blueprint."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "64226c67-1f05-4b18-82d7-6081195a6e7a"
+      }
+    }
+  }
+}

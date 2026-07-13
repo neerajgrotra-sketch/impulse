@@ -1,0 +1,141 @@
+# Governance — lightweight STRUCTURAL checks on every PR.
+#
+# WHY this workflow exists: the operating system (`.claude/CONVENTIONS.md`) only works if the
+# assets that encode it stay well-formed. This job enforces the cheap, objective invariants a
+# human reviewer should never have to babysit — it does NOT judge content, taste, or tier.
+# It is deliberately plain bash with no external actions beyond checkout, so it is auditable,
+# has no supply-chain surface, and fails with messages that say exactly WHAT and WHY.
+#
+# It runs three checks (see the steps below). It intentionally does NOT run a test or eval
+# suite — those live with the code and do not exist as a repo-wide target yet.
+
+name: governance
+
+on:
+  pull_request:
+    branches: [main]
+
+# Least privilege: we only read the checked-out tree.
+permissions:
+  contents: read
+
+jobs:
+  structural-governance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the PR
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------------------------
+      # Check 1 — Every skill is complete.
+      # WHY: `.claude/CONVENTIONS.md` §3 fixes the seven sections a SKILL.md must carry, in
+      # order. A skill missing "Checklist" or "Failure criteria" is a review with no teeth. We
+      # assert the section headings exist; we do not grade their contents.
+      # -------------------------------------------------------------------------------------
+      - name: Check 1 — SKILL.md files contain all required sections
+        run: |
+          set -uo pipefail
+          required=("Purpose" "When to use" "Inputs" "Outputs" "Checklist" "Success criteria" "Failure criteria")
+          fail=0
+          shopt -s nullglob
+          skills=(.claude/skills/*/SKILL.md)
+          if [ ${#skills[@]} -eq 0 ]; then
+            echo "No .claude/skills/*/SKILL.md found — nothing to check."
+          fi
+          for f in "${skills[@]}"; do
+            for section in "${required[@]}"; do
+              # Match a Markdown heading line exactly, e.g. "## Purpose".
+              if ! grep -qE "^#{1,6}[[:space:]]+${section}[[:space:]]*$" "$f"; then
+                echo "::error file=$f::missing required section '## ${section}' (see .claude/CONVENTIONS.md §3)"
+                fail=1
+              fi
+            done
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "Check 1 FAILED: one or more skills are missing required sections."
+            exit 1
+          fi
+          echo "Check 1 passed: all skills carry the seven required sections."
+
+      # -------------------------------------------------------------------------------------
+      # Check 2 — ADRs and PDRs are numbered and have a Status.
+      # WHY: `.claude/CONVENTIONS.md` §3 requires records to be numbered monotonically and to
+      # carry a lifecycle Status (Proposed → Accepted → Superseded/Deprecated). An unnumbered
+      # or status-less record cannot be superseded or audited. README.md and template files
+      # are excluded by name — they are scaffolding, not records.
+      # -------------------------------------------------------------------------------------
+      - name: Check 2 — ADR/PDR files are numbered and carry a Status line
+        run: |
+          set -uo pipefail
+          fail=0
+          shopt -s nullglob
+          records=(adr/*.md decisions/*.md)
+          if [ ${#records[@]} -eq 0 ]; then
+            echo "No ADRs or PDRs present yet — nothing to check."
+          fi
+          for f in "${records[@]}"; do
+            base="$(basename "$f")"
+            # Skip scaffolding that is not itself a decision record.
+            case "$base" in
+              README.md|*template*.md|*TEMPLATE*.md) echo "Skipping scaffolding: $f"; continue ;;
+            esac
+            # Filename must start with a 4-digit number: NNNN-title.md.
+            if ! echo "$base" | grep -qE '^[0-9]{4}-.+\.md$'; then
+              echo "::error file=$f::record must be named NNNN-title.md (see .claude/CONVENTIONS.md §3)"
+              fail=1
+            fi
+            # Must contain a Status line (e.g. "> **Status:** Accepted" or "Status: Proposed").
+            if ! grep -qiE '^[[:space:]>*]*status[[:space:]>*]*:' "$f"; then
+              echo "::error file=$f::record is missing a 'Status:' line (Proposed/Accepted/Superseded/Deprecated)"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "Check 2 FAILED: one or more decision records are malformed."
+            exit 1
+          fi
+          echo "Check 2 passed: all decision records are numbered and carry a Status."
+
+      # -------------------------------------------------------------------------------------
+      # Check 3 — No obvious secrets in tracked Markdown under docs/ or .rules/.
+      # WHY: "No secrets" is a non-negotiable (`docs/15 Constitution.md`, `.rules/security.md`).
+      # Docs and rules are prose that people paste into freely, so they are where a key or
+      # token slips in. This is a coarse, high-signal net for OBVIOUS leaks — not a full
+      # secret scanner. A hit fails the build; a false positive can be reworded or the line
+      # excluded via review.
+      # -------------------------------------------------------------------------------------
+      - name: Check 3 — No obvious secret patterns in docs/ or .rules/ Markdown
+        run: |
+          set -uo pipefail
+          # High-signal secret patterns. Extended regex, case-insensitive where relevant.
+          patterns=(
+            'AKIA[0-9A-Z]{16}'                                  # AWS access key id
+            'ASIA[0-9A-Z]{16}'                                  # AWS temporary key id
+            'sk-[A-Za-z0-9]{20,}'                               # OpenAI-style secret key
+            'sk-ant-[A-Za-z0-9_-]{20,}'                         # Anthropic API key
+            'ghp_[A-Za-z0-9]{36}'                               # GitHub personal access token
+            'github_pat_[A-Za-z0-9_]{22,}'                      # GitHub fine-grained PAT
+            'xox[baprs]-[A-Za-z0-9-]{10,}'                      # Slack token
+            'AIza[0-9A-Za-z_-]{35}'                             # Google API key
+            '-----BEGIN[ A-Z]*PRIVATE KEY-----'                 # PEM private key block
+            '(postgres|postgresql|redis|mysql)://[^[:space:]]*:[^[:space:]/@]+@'  # DSN with inline password
+          )
+          fail=0
+          shopt -s nullglob globstar
+          files=(docs/**/*.md .rules/**/*.md docs/*.md .rules/*.md)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No Markdown under docs/ or .rules/ — nothing to scan."
+          fi
+          for pat in "${patterns[@]}"; do
+            # -I skips binary; -n gives line numbers; failure of grep (no match) is fine.
+            if hits="$(grep -IniE "$pat" "${files[@]}" 2>/dev/null)"; then
+              echo "::error::possible secret matching /$pat/ found:"
+              echo "$hits"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "Check 3 FAILED: possible secret(s) in docs/ or .rules/. Remove and rotate them."
+            exit 1
+          fi
+          echo "Check 3 passed: no obvious secret patterns in docs/ or .rules/."

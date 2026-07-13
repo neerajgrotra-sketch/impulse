@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --yes eas-cli@latest device --help)",
+      "Bash(npx --yes eas-cli@latest build --help)",
+      "Bash(node -e ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(mkdir -p /tmp/claude-1000/-workspaces-impulse/074114dd-5fa2-4afb-9976-a661ff4c669f/scratchpad/sdk54check)",
+      "Bash(npm init *)",
+      "Bash(node -e \"const p=require\\('./node_modules/expo/package.json'\\); console.log\\(JSON.stringify\\({version:p.version, peerDependencies:p.peerDependencies, dependencies:p.dependencies}, null, 2\\)\\)\")",
+      "Bash(node -e \"console.log\\(require\\('./package-lock.json'\\).packages[''].engines\\)\")",
+      "Bash(git status *)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)"
+    ]
+  }
+}

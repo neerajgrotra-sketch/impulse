@@ -1,0 +1,82 @@
+# CODEOWNERS — ownership by area, mapped to the change-tiering model (`.claude/CONVENTIONS.md` §2).
+#
+# WHY: review must land on the people who own the risk. Sensitive areas — coaching, safety,
+# memory, privacy, notifications, identity, and the model — require the safety/ethics owners
+# on every change, because a mistake there costs a user's trust, not minutes (`docs/15 Constitution.md`).
+#
+# The team handles below are PLACEHOLDERS — replace with real GitHub teams before enabling
+# branch protection:
+#   @impulse/platform  — backend modular monolith, infra, CI, event bus, data plumbing
+#   @impulse/coaching  — Coach/Decision/Identity/Learning engines, prompts, coaching surface
+#   @impulse/safety    — Safety Engine, ethics, privacy, the Covenant (the safety/ethics owners)
+#   @impulse/ios       — Swift/SwiftUI client, offline-first, navigation
+#
+# Last matching pattern wins (GitHub semantics), so Sensitive-area rules are placed LAST to
+# override broader defaults and force the safety/ethics owners onto those paths.
+
+# ----- Default: everything has an owner -----
+*                               @impulse/platform
+
+# ----- Governance & operating-system assets -----
+/.github/                       @impulse/platform @impulse/safety
+/.claude/                       @impulse/platform
+/.claude/CONVENTIONS.md         @impulse/platform @impulse/safety
+/.claude/skills/                @impulse/platform
+/.claude/skills/behavioral-review/  @impulse/safety @impulse/coaching
+/.claude/skills/design-council/     @impulse/safety @impulse/coaching
+/.claude/skills/security-review/    @impulse/safety
+/.rules/                        @impulse/platform
+/.rules/privacy.md              @impulse/safety
+/.rules/security.md             @impulse/safety
+
+# ----- Documentation -----
+# Canon and most docs are platform-owned; safety/ethics co-owns the sensitive ones.
+/docs/                          @impulse/platform
+
+# ----- Architecture & decision records -----
+/architecture/                  @impulse/platform
+/adr/                           @impulse/platform
+/decisions/                     @impulse/safety @impulse/coaching   # PDRs: user-facing behavior & ethics
+
+# ----- iOS client -----
+/ios/                           @impulse/ios
+*.swift                         @impulse/ios
+
+# ----- Backend engines (modular monolith, `docs/12 Backend Architecture.md`) -----
+# Anticipated module layout; adjust paths to the real tree as it lands. Non-sensitive engines
+# default to platform; Sensitive engines are overridden below.
+/backend/                       @impulse/platform
+/backend/engines/decision/      @impulse/coaching
+/backend/engines/emotion/       @impulse/coaching
+/backend/engines/prompt_builder/  @impulse/coaching
+
+# =========================================================================================
+# SENSITIVE AREAS — placed last so they win. These REQUIRE the safety/ethics owners.
+# Touching any of these forces Sensitive-tier review (`.claude/CONVENTIONS.md` §2):
+# full feature lifecycle + Design Council + ethical review.
+# =========================================================================================
+
+# Coaching
+/backend/engines/coach/         @impulse/coaching @impulse/safety
+/prompts/                       @impulse/coaching @impulse/safety
+
+# Safety
+/backend/engines/safety/        @impulse/safety
+/backend/safety/                @impulse/safety
+
+# Memory & the model
+/backend/engines/memory/        @impulse/coaching @impulse/safety
+/backend/engines/learning/      @impulse/coaching @impulse/safety
+/backend/model/                 @impulse/coaching @impulse/safety
+
+# Identity (root aggregate — `docs/00 Canon.md` §5)
+/backend/engines/identity/      @impulse/coaching @impulse/safety
+
+# Notifications (ethics of attention — `docs/14 Notification Engine.md`)
+/backend/engines/notification/  @impulse/coaching @impulse/safety
+
+# Privacy: consent, retention, deletion, the Covenant (`docs/15 Constitution.md`)
+/backend/privacy/               @impulse/safety
+/backend/consent/               @impulse/safety
+/docs/15 Constitution.md        @impulse/safety
+/docs/08 Database Architecture.md  @impulse/safety @impulse/platform

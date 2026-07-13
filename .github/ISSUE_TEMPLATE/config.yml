@@ -1,0 +1,18 @@
+# Issue-template chooser config.
+# Blank issues are disabled: every issue must enter through a template so it carries the
+# tier, JTBD, and Sensitive-area signals the operating system depends on
+# (`.claude/CONVENTIONS.md` §2). An untriaged blank issue is a process leak.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Safety or ethics concern (do not file a public issue)
+    # For anything touching a user's safety, crisis handling, privacy, or dignity, route to
+    # the Constitution — the highest law of Impulse — rather than the public bug queue.
+    url: https://github.com/impulse/impulse/blob/main/docs/15%20Constitution.md
+    about: Read the Covenant and non-negotiables, then follow the escalation path there. Safety pre-empts everything.
+
+  - name: How we work — Contributing guide
+    # Read this before opening a PR: the tiering model, the feature lifecycle, and the
+    # non-negotiables.
+    url: https://github.com/impulse/impulse/blob/main/.github/CONTRIBUTING.md
+    about: The tiering model, feature lifecycle, PR process, ADR vs PDR vs Design Council, and the non-negotiables.
