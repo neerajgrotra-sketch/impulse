@@ -37,6 +37,12 @@ export function useVoiceCapture(): VoiceCapture {
 
   const moduleRef = useRef<SpeechModule | null>(null);
   const subscriptionsRef = useRef<{ remove: () => void }[]>([]);
+  // Bumped every time a session is deliberately ended (aborted, stopped, or
+  // superseded by a newer `start()`) so late-arriving native events from a
+  // session we've already moved on from can be told apart from events
+  // belonging to the current one — see `start()` below for why this exists.
+  const sessionIdRef = useRef(0);
+  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isExpoGo) return;
@@ -65,6 +71,11 @@ export function useVoiceCapture(): VoiceCapture {
   }, []);
 
   const stop = useCallback(() => {
+    sessionIdRef.current += 1;
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
     moduleRef.current?.ExpoSpeechRecognitionModule.stop();
     teardownListeners();
     setIsRecording(false);
@@ -88,35 +99,70 @@ export function useVoiceCapture(): VoiceCapture {
     const mod = moduleRef.current;
     if (!mod) return;
 
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
+
+    // Retiring the current session (bumping sessionIdRef, dropping our
+    // listeners) before requesting the native cancel matters: `abort()`'s
+    // own completion is asynchronous, and if we'd already attached the
+    // *next* session's listeners by the time that trailing event arrives,
+    // it lands on them and wrongly flips `isRecording` back to false right
+    // after the new session started — this is what made "Try again"
+    // (ConversationScreen) flash Done and then disappear, and repeated
+    // rapid retries eventually wedge the recognizer entirely. Removing our
+    // listeners first means that trailing event has nothing to land on.
+    sessionIdRef.current += 1;
     teardownListeners();
     setTranscript("");
+    mod.ExpoSpeechRecognitionModule.abort();
 
-    subscriptionsRef.current = [
-      mod.ExpoSpeechRecognitionModule.addListener(
-        "result",
-        (event: ExpoSpeechRecognitionResultEvent) => {
-          const text = event.results[0]?.transcript;
-          if (text) setTranscript(text);
-        }
-      ),
-      mod.ExpoSpeechRecognitionModule.addListener("end", () => setIsRecording(false)),
-      mod.ExpoSpeechRecognitionModule.addListener("error", () => setIsRecording(false)),
-    ];
+    // Give the native side a beat to actually finish tearing down before
+    // asking it to start again — starting in the same tick as `abort()`
+    // raced the previous session on-device (see above).
+    restartTimeoutRef.current = setTimeout(() => {
+      restartTimeoutRef.current = null;
+      const mod = moduleRef.current;
+      if (!mod) return;
 
-    try {
-      mod.ExpoSpeechRecognitionModule.start({
-        lang: "en-US",
-        interimResults: true,
-        continuous: true,
-      });
-      setIsRecording(true);
-    } catch {
-      // Unverified on-device (see the file header) — if the native call
-      // throws synchronously rather than emitting an `error` event, fail
-      // into the same "not recording" state instead of crashing the screen.
-      teardownListeners();
-      setIsRecording(false);
-    }
+      const sessionId = ++sessionIdRef.current;
+      const isStale = () => sessionIdRef.current !== sessionId;
+
+      subscriptionsRef.current = [
+        mod.ExpoSpeechRecognitionModule.addListener(
+          "result",
+          (event: ExpoSpeechRecognitionResultEvent) => {
+            if (isStale()) return;
+            const text = event.results[0]?.transcript;
+            if (text) setTranscript(text);
+          }
+        ),
+        mod.ExpoSpeechRecognitionModule.addListener("end", () => {
+          if (isStale()) return;
+          setIsRecording(false);
+        }),
+        mod.ExpoSpeechRecognitionModule.addListener("error", () => {
+          if (isStale()) return;
+          setIsRecording(false);
+        }),
+      ];
+
+      try {
+        mod.ExpoSpeechRecognitionModule.start({
+          lang: "en-US",
+          interimResults: true,
+          continuous: true,
+        });
+        setIsRecording(true);
+      } catch {
+        // Unverified on-device (see the file header) — if the native call
+        // throws synchronously rather than emitting an `error` event, fail
+        // into the same "not recording" state instead of crashing the screen.
+        teardownListeners();
+        setIsRecording(false);
+      }
+    }, 150);
   }, [teardownListeners]);
 
   useEffect(() => () => stop(), [stop]);

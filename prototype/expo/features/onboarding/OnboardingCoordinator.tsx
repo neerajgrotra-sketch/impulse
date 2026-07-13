@@ -4,11 +4,11 @@ import { PlaceholderScreen } from "@/components";
 import { useQuestionVoice } from "@/hooks/useQuestionVoice";
 import { useVoiceCapture } from "@/hooks/useVoiceCapture";
 import { useOnboardingStore } from "@/stores/onboardingStore";
+import { CoachingTouchScreen } from "./screens/CoachingTouchScreen";
 import { ConsentScreen } from "./screens/ConsentScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { ErrorRetryScreen } from "./screens/ErrorRetryScreen";
-import { ReflectionScreen } from "./screens/ReflectionScreen";
-import { ThinkingScreen } from "./screens/ThinkingScreen";
+import { IdentityConfirmScreen } from "./screens/IdentityConfirmScreen";
 import { WelcomeScreen } from "./screens/WelcomeScreen";
 
 /**
@@ -48,10 +48,18 @@ export function OnboardingCoordinator() {
         return <ConsentScreen voiceCapture={voiceCapture} />;
       case "conversation":
         return <ConversationScreen voiceCapture={voiceCapture} questionVoice={questionVoice} />;
+      case "identity-confirm":
+        return <IdentityConfirmScreen />;
+      case "coaching-touch":
+        return <CoachingTouchScreen />;
       case "thinking":
-        return <ThinkingScreen />;
       case "blueprint":
-        return <ReflectionScreen />;
+        // Unreached from onboarding's default flow as of PDR 0006 — kept as
+        // valid phases for a future, separately-specced Blueprint feature.
+        // ThinkingScreen/ReflectionScreen still exist and still work; they're
+        // just not wired into this coordinator's switch. See
+        // types/onboarding.ts's OnboardingPhase doc comment.
+        return null;
       case "promise":
         return <PlaceholderScreen eyebrow="Milestone 5" message="The Promise arrives in Milestone 5." />;
       case "confirmation":

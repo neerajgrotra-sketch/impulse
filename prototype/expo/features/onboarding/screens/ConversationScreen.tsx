@@ -3,21 +3,23 @@ import {
   AppState,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import * as Haptics from "expo-haptics";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { GradientBackground, PrimaryButton, VoiceOrb } from "@/components";
+import { BackButton, GradientBackground, PrimaryButton, VoiceOrb } from "@/components";
 import type { VoiceOrbState } from "@/components";
-import { onboardingQuestions } from "@/constants/onboardingQuestions";
+import { identityStarters, onboardingQuestions } from "@/constants/onboardingQuestions";
 import type { QuestionVoice } from "@/hooks/useQuestionVoice";
 import type { VoiceCapture } from "@/hooks/useVoiceCapture";
 import { useOnboardingStore } from "@/stores/onboardingStore";
-import { colors, fontFamily, spacing, typography } from "@/theme";
+import { colors, fontFamily, radius, spacing, typography } from "@/theme";
 import type { OnboardingQuestion } from "@/types/onboarding";
 
 type ConversationScreenProps = {
@@ -33,10 +35,19 @@ type ConversationScreenProps = {
  * manual "Done" tap ends the answer, same deliberate simplification as the
  * Swift source: automatic silence-detection is a real reliability risk this
  * prototype doesn't take on.
+ *
+ * Originally had no back button by design ("this is a conversation, not a
+ * form"). That held for the old fixed eight-question battery, where a
+ * skipped/wrong answer barely mattered next to the sheer length of the
+ * flow — but with the whole conversation down to one or two questions
+ * (PDR 0006), having no way to revise an earlier answer became a real gap,
+ * not a feature. `goBack` now covers it.
  */
 export function ConversationScreen({ voiceCapture, questionVoice }: ConversationScreenProps) {
   const phase = useOnboardingStore((state) => state.phase);
   const recordAnswer = useOnboardingStore((state) => state.recordAnswer);
+  const skipReflection = useOnboardingStore((state) => state.skipReflection);
+  const goBack = useOnboardingStore((state) => state.goBack);
   const insets = useSafeAreaInsets();
   const [typedAnswer, setTypedAnswer] = useState("");
   const inputRef = useRef<TextInput>(null);
@@ -95,6 +106,15 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
     return () => subscription.remove();
   }, []);
 
+  // Lets the user discard whatever's been captured so far (mid-recording or
+  // already stopped) and start listening for this same question again.
+  // `voiceCapture.start()` already tears down any active session and clears
+  // `transcript` before restarting, so this is safe to call in either state.
+  function retryRecording() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    voiceCapture.start();
+  }
+
   function finishAnswer() {
     if (hasFinishedRef.current) return;
     const answer = voiceCapture.isAvailable ? voiceCapture.transcript : typedAnswer;
@@ -108,6 +128,39 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
     questionVoice.stop();
     recordAnswer(answer);
     setTypedAnswer("");
+  }
+
+  // Tap-to-pick identity starters (`05 Onboarding.md` §3 Step 2) — "exist
+  // only to unstick the blank page," so tapping one submits it directly
+  // rather than dropping it into the input for further editing.
+  function submitStarter(starter: string) {
+    if (hasFinishedRef.current) return;
+    hasFinishedRef.current = true;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    voiceCapture.stop();
+    questionVoice.stop();
+    recordAnswer(starter);
+    setTypedAnswer("");
+  }
+
+  // The tiny reflection is freely skippable — no answer recorded for it at
+  // all (`05 Onboarding.md` §3 Step 3).
+  function skipThisReflection() {
+    if (hasFinishedRef.current) return;
+    hasFinishedRef.current = true;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    voiceCapture.stop();
+    questionVoice.stop();
+    skipReflection();
+    setTypedAnswer("");
+  }
+
+  function goToPreviousQuestion() {
+    if (hasFinishedRef.current) return;
+    hasFinishedRef.current = true;
+    voiceCapture.stop();
+    questionVoice.stop();
+    goBack();
   }
 
   const orbState: VoiceOrbState = questionVoice.isSpeaking
@@ -124,11 +177,22 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
     ? voiceCapture.isRecording || voiceCapture.transcript.trim().length > 0
     : typedAnswer.trim().length > 0;
 
+  // "Try again" only makes sense once there's something captured to discard
+  // — and only in voice mode, since typed answers are already directly
+  // editable in place.
+  const canRetry = voiceCapture.isAvailable && voiceCapture.transcript.trim().length > 0;
+
   if (!currentQuestion) return null;
 
   return (
     <View style={styles.container}>
       <GradientBackground />
+
+      {phase.status === "conversation" && phase.questionIndex > 0 && (
+        <View style={[styles.backSlot, { top: insets.top + spacing.sm }]}>
+          <BackButton onPress={goToPreviousQuestion} />
+        </View>
+      )}
 
       <KeyboardAvoidingView
         style={styles.flex}
@@ -171,9 +235,46 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
             )}
           </View>
 
+          {currentQuestion.kind === "identity" && (
+            <View style={styles.starterRow}>
+              {identityStarters.map((starter) => (
+                <Pressable
+                  key={starter}
+                  onPress={() => submitStarter(starter)}
+                  style={styles.starterChip}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Answer with: ${starter}`}
+                >
+                  <Text style={styles.starterChipLabel}>{starter}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          {currentQuestion.kind === "reflection" && (
+            <Pressable
+              onPress={skipThisReflection}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Skip this"
+            >
+              <Text style={styles.retryLabel}>Skip this</Text>
+            </Pressable>
+          )}
+
           <View style={styles.doneSlot}>
             {canFinish && (
-              <Animated.View entering={FadeIn} exiting={FadeOut}>
+              <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.actions}>
+                {canRetry && (
+                  <Pressable
+                    onPress={retryRecording}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Try again"
+                  >
+                    <Text style={styles.retryLabel}>Try again</Text>
+                  </Pressable>
+                )}
                 <PrimaryButton label="Done" onPress={finishAnswer} />
               </Animated.View>
             )}
@@ -191,6 +292,11 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  backSlot: {
+    position: "absolute",
+    left: spacing.lg,
+    zIndex: 1,
   },
   content: {
     flex: 1,
@@ -226,5 +332,33 @@ const styles = StyleSheet.create({
   doneSlot: {
     minHeight: 52,
     justifyContent: "center",
+  },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.lg,
+  },
+  retryLabel: {
+    ...typography.bodySecondary,
+    textDecorationLine: "underline",
+  },
+  starterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+  },
+  starterChip: {
+    borderWidth: 1,
+    borderColor: colors.overlay.hairline,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.xs + 2,
+  },
+  starterChipLabel: {
+    ...typography.caption,
+    color: colors.inkSecondary,
   },
 });
