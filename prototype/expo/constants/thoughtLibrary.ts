@@ -15,10 +15,18 @@ export type ThoughtTheme =
   | "purpose"
   | "follow-through";
 
+/**
+ * `theme` is intentionally `string`, not `ThoughtTheme` — it is never read
+ * for conditional rendering anywhere in `ThoughtBubble`/`ThoughtStream`/
+ * `useThoughtScheduler` (confirmed before this widening), so a generated
+ * source (AE-001's Life Dimension strings, `constants/lifeDimensions.ts`)
+ * can produce this same shape without a parallel `Thought` type. `ThoughtTheme`
+ * itself stays exported and is still what the curated array below uses.
+ */
 export type Thought = {
   id: string;
   text: string;
-  theme: ThoughtTheme;
+  theme: string;
 };
 
 /**

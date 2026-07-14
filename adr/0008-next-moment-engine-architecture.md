@@ -1,6 +1,6 @@
 # ADR 0008 — A deterministic moment state machine wraps a probabilistic, safety-gated Next-Moment Engine
 
-> **Status:** Proposed
+> **Status:** Superseded by `decisions/0013-runtime-reconciliation-and-concept-consolidation.md` — never reached Accepted; its contract (riskTier safety logic, deterministic fallback, eval requirements) is preserved intact inside Coach Engine, not discarded. See ADR 0013 Part 2 and its Migration Plan.
 > **Date:** 2026-07
 > **Deciders:** Neeraj Grotra (founder), pending Design Council review (`decisions/0010-next-moment-engine-design-council.md`)
 

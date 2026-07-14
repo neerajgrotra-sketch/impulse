@@ -41,6 +41,13 @@ type UseThoughtSchedulerOptions = {
    *  thought indefinitely (same mechanism as `reduceMotion`, independent
    *  trigger) and announces it once via `AccessibilityInfo`. */
   screenReaderEnabled?: boolean;
+  /** Backward-compatible injection point (adr/0013 Part 2 / decisions/0012):
+   *  defaults to the existing curated `createThoughtSequence` so every
+   *  current caller is byte-for-byte unchanged. AE-001 passes a source built
+   *  from the backend's AI-generated thought pool instead — same shuffle/
+   *  no-repeat contract, different content. Called each time the queue is
+   *  empty, exactly like `createThoughtSequence()` was before. */
+  thoughtSource?: () => Thought[];
 };
 
 type UseThoughtSchedulerResult = {
@@ -57,6 +64,7 @@ export function useThoughtScheduler({
   paused,
   reduceMotion = false,
   screenReaderEnabled = false,
+  thoughtSource = createThoughtSequence,
 }: UseThoughtSchedulerOptions): UseThoughtSchedulerResult {
   const [thought, setThought] = useState<Thought | null>(null);
   const [phase, setPhase] = useState<ThoughtBubblePhase>("idle");
@@ -87,7 +95,7 @@ export function useThoughtScheduler({
 
     function drawNextThought(): Thought | null {
       if (queueRef.current.length === 0) {
-        queueRef.current = createThoughtSequence();
+        queueRef.current = thoughtSource();
       }
       return queueRef.current.pop() ?? null;
     }
@@ -145,7 +153,7 @@ export function useThoughtScheduler({
       generationRef.current += 1;
       clearPending();
     };
-  }, [paused, reduceMotion, screenReaderEnabled, clearPending]);
+  }, [paused, reduceMotion, screenReaderEnabled, thoughtSource, clearPending]);
 
   return { thought, phase };
 }

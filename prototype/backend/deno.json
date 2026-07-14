@@ -1,0 +1,8 @@
+{
+  "tasks": {
+    "test": "deno test --allow-env --allow-net supabase/functions/"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1"
+  }
+}

@@ -63,3 +63,5 @@ Once an ADR is **Accepted**, its **Decision** and **Context** are frozen. To cha
 | [0005](0005-safety-engine-gates-launch.md) | A cross-cutting Safety Engine gates launch | Accepted | `docs/04 AI Brain.md` |
 | [0006](0006-tiered-claude-models.md) | Tiered Claude models behind one gateway | Accepted | `docs/04 AI Brain.md` |
 | [0007](0007-postgres-pgvector-memory.md) | Postgres + pgvector for the Memory Engine | Accepted | `docs/08 Database Architecture.md` |
+| [0008](0008-next-moment-engine-architecture.md) | A deterministic moment state machine wraps a probabilistic, safety-gated Next-Moment Engine | Superseded by `decisions/0013` | `docs/identity-onboarding-choreography-v2.md` |
+| 0009 *(filed at [`decisions/0013`](../decisions/0013-runtime-reconciliation-and-concept-consolidation.md) instead — architectural content, nonstandard path per explicit instruction; see that file's own header note)* | Runtime reconciliation and concept consolidation | Proposed | `04 AI Brain.md` |
