@@ -1,7 +1,12 @@
 export { BackButton } from "./BackButton";
+export { BreathingOrb } from "./BreathingOrb";
+export { EditableVisionCard } from "./EditableVisionCard";
 export { EmphasizedText } from "./EmphasizedText";
 export { GradientBackground } from "./GradientBackground";
 export { PlaceholderScreen } from "./PlaceholderScreen";
 export { PrimaryButton } from "./PrimaryButton";
+export { ThoughtBubble } from "./ThoughtBubble";
+export { ThoughtStream } from "./ThoughtStream";
+export { VoiceCaptureButton } from "./VoiceCaptureButton";
 export { VoiceOrb } from "./VoiceOrb";
 export type { VoiceOrbState } from "./VoiceOrb";

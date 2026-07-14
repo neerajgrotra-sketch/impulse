@@ -25,7 +25,7 @@ type PrimaryButtonProps = {
  */
 export function PrimaryButton({ label, onPress, fullWidth, loading, disabled }: PrimaryButtonProps) {
   const scale = useSharedValue(1);
-  const isDisabled = disabled || loading;
+  const isDisabled = Boolean(disabled || loading);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],

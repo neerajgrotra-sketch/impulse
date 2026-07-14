@@ -15,11 +15,12 @@ import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackButton, GradientBackground, PrimaryButton, VoiceOrb } from "@/components";
 import type { VoiceOrbState } from "@/components";
-import { identityStarters, onboardingQuestions } from "@/constants/onboardingQuestions";
+import { onboardingQuestions } from "@/constants/onboardingQuestions";
+import { IdentityInspirationScreen } from "./IdentityInspirationScreen";
 import type { QuestionVoice } from "@/hooks/useQuestionVoice";
 import type { VoiceCapture } from "@/hooks/useVoiceCapture";
 import { useOnboardingStore } from "@/stores/onboardingStore";
-import { colors, fontFamily, radius, spacing, typography } from "@/theme";
+import { colors, fontFamily, spacing, typography } from "@/theme";
 import type { OnboardingQuestion } from "@/types/onboarding";
 
 type ConversationScreenProps = {
@@ -64,6 +65,10 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
 
   const speakAndListen = useCallback(
     async (question: OnboardingQuestion) => {
+      // The identity question owns its own speak/listen lifecycle via
+      // `IdentityInspirationScreen` (tap-to-record, not auto-listen) — this
+      // screen's generic cycle only drives the reflection question now.
+      if (question.kind === "identity") return;
       voiceCapture.stop();
       setTypedAnswer("");
       hasFinishedRef.current = false;
@@ -99,6 +104,7 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
       if (nextState !== "active") return;
       const { currentQuestion, voiceCapture, questionVoice, speakAndListen } = latestRef.current;
       if (!currentQuestion) return;
+      if (currentQuestion.kind === "identity") return;
       if (!voiceCapture.isAvailable) return;
       if (questionVoice.isSpeaking || voiceCapture.isRecording) return;
       speakAndListen(currentQuestion);
@@ -127,19 +133,6 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
     // over the transition into the next phase.
     questionVoice.stop();
     recordAnswer(answer);
-    setTypedAnswer("");
-  }
-
-  // Tap-to-pick identity starters (`05 Onboarding.md` §3 Step 2) — "exist
-  // only to unstick the blank page," so tapping one submits it directly
-  // rather than dropping it into the input for further editing.
-  function submitStarter(starter: string) {
-    if (hasFinishedRef.current) return;
-    hasFinishedRef.current = true;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    voiceCapture.stop();
-    questionVoice.stop();
-    recordAnswer(starter);
     setTypedAnswer("");
   }
 
@@ -183,6 +176,20 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
   const canRetry = voiceCapture.isAvailable && voiceCapture.transcript.trim().length > 0;
 
   if (!currentQuestion) return null;
+
+  // The identity question (always index 0, no prior question to go back
+  // to) gets the thought-stream/vision-card treatment instead of this
+  // screen's generic voice-or-typed body — see IdentityInspirationScreen.
+  if (currentQuestion.kind === "identity") {
+    return (
+      <IdentityInspirationScreen
+        question={currentQuestion}
+        voiceCapture={voiceCapture}
+        questionVoice={questionVoice}
+        onSubmit={recordAnswer}
+      />
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -234,22 +241,6 @@ export function ConversationScreen({ voiceCapture, questionVoice }: Conversation
               />
             )}
           </View>
-
-          {currentQuestion.kind === "identity" && (
-            <View style={styles.starterRow}>
-              {identityStarters.map((starter) => (
-                <Pressable
-                  key={starter}
-                  onPress={() => submitStarter(starter)}
-                  style={styles.starterChip}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Answer with: ${starter}`}
-                >
-                  <Text style={styles.starterChipLabel}>{starter}</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
 
           {currentQuestion.kind === "reflection" && (
             <Pressable
@@ -342,23 +333,5 @@ const styles = StyleSheet.create({
   retryLabel: {
     ...typography.bodySecondary,
     textDecorationLine: "underline",
-  },
-  starterRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.lg,
-  },
-  starterChip: {
-    borderWidth: 1,
-    borderColor: colors.overlay.hairline,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.sm + 4,
-    paddingVertical: spacing.xs + 2,
-  },
-  starterChipLabel: {
-    ...typography.caption,
-    color: colors.inkSecondary,
   },
 });

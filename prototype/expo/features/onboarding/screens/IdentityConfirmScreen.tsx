@@ -4,34 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackButton, GradientBackground, PrimaryButton } from "@/components";
 import { useOnboardingStore } from "@/stores/onboardingStore";
 import { colors, spacing, typography } from "@/theme";
-
-/**
- * Mechanically wraps the raw identity-prompt answer into a first-person,
- * present-tense Identity Statement ("I am someone who…") — `05
- * Onboarding.md` §3 Step 2's required shape. This is a deliberate, honest
- * simplification for the prototype: the real Identity Engine extraction is
- * "LLM-assisted, human-confirmed" per §3 Step 2, which needs a Prompt
- * Builder call this rebuild pass deliberately keeps client-side only (see
- * PDR 0006's rebuild sequencing). Wrapping their own words, unchanged, is
- * still honest — it never invents content — and the user edits or confirms
- * it either way, so "we propose; they own" holds regardless of how the
- * proposal was produced.
- */
-function deriveIdentityStatement(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith("i am ") || lower.startsWith("i'm ")) {
-    return trimmed;
-  }
-
-  const lowerFirst = trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
-  if (lower.startsWith("someone who")) {
-    return `I am ${lowerFirst}`;
-  }
-  return `I am someone who ${lowerFirst}`;
-}
+import { deriveIdentityStatement } from "@/utils/identityStatement";
 
 /**
  * `05 Onboarding.md` §3 Step 2's confirmation moment: "we propose; they

@@ -97,3 +97,4 @@ Every PDR uses **`.claude/templates/pdr-template.md`**. Required sections, in or
 | [0004](0004-future-self-only-with-present-consent.md) | The Coach pursues Future Self's interests only with Present Self's consent | Accepted | 2026-07 | Founding Team |
 | [0005](0005-product-never-outruns-evidence.md) | The product never outruns the evidence (research-driven policy) | Accepted | 2026-07 | Founding Team |
 | [0006](0006-onboarding-rejects-fixed-interview-requires-safety-gate.md) | Onboarding rejects the fixed cold-open interview and requires per-turn safety screening | Accepted | 2026-07 | Neeraj Grotra (founder), via Design Council review |
+| [0007](0007-identity-thought-stream-scope-expansion.md) | Identity capture expands from static starter chips to a reviewed thought-stream interaction | Accepted | 2026-07 | Neeraj Grotra (founder), via behavioral-review + Design Council review |
