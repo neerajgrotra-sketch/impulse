@@ -26,13 +26,16 @@ export interface InspirationResult {
 
 export class IdentityEngineError extends Error {}
 
+// Structured-output JSON Schema only supports minItems/maxItems of 0 or 1 —
+// arbitrary bounds (15 dimensions, 40-55 thoughts) are enforced by the
+// prompt instructions instead (assembleInspirationPrompt's layer1Task) and
+// checked in code below (lintInspirationResult / the dimension-count check),
+// not by the schema.
 const INSPIRATION_SCHEMA = {
   type: "object",
   properties: {
     ranked_dimensions: {
       type: "array",
-      minItems: LIFE_DIMENSIONS.length,
-      maxItems: LIFE_DIMENSIONS.length,
       items: {
         type: "object",
         properties: {
@@ -45,8 +48,6 @@ const INSPIRATION_SCHEMA = {
     },
     thoughts: {
       type: "array",
-      minItems: 40,
-      maxItems: 55,
       items: {
         type: "object",
         properties: {

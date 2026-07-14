@@ -63,7 +63,6 @@ async function callClassifier(text: string): Promise<unknown> {
     model: MODEL.fast,
     max_tokens: 256,
     output_config: {
-      effort: "low",
       format: { type: "json_schema", schema: SAFETY_SCHEMA },
     },
     system: SAFETY_SYSTEM_PROMPT,
