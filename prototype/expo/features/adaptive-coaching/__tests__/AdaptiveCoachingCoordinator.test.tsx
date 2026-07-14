@@ -59,7 +59,7 @@ describe("AdaptiveCoachingCoordinator", () => {
     await fireEvent.changeText(getByLabelText("Your first name"), "Maya");
     await fireEvent.press(getByLabelText("Continue"));
 
-    expect(getByText("Who are you becoming?")).toBeTruthy();
+    expect(getByText("Who Do You Want To Become?")).toBeTruthy();
     expect(useAdaptiveCoachingStore.getState().firstName).toBe("Maya");
   });
 

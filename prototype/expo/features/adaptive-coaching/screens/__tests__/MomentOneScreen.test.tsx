@@ -32,9 +32,9 @@ describe("MomentOneScreen", () => {
     jest.clearAllTimers();
   });
 
-  it("asks 'Who are you becoming?' and shows no thought stream (nothing is generated yet at this point)", async () => {
+  it("asks 'Who Do You Want To Become?' and shows no thought stream (nothing is generated yet at this point)", async () => {
     const { getByText, queryAllByLabelText } = await renderScreen(jest.fn());
-    expect(getByText("Who are you becoming?")).toBeTruthy();
+    expect(getByText("Who Do You Want To Become?")).toBeTruthy();
     expect(queryAllByLabelText(/^Use this thought:/)).toHaveLength(0);
   });
 

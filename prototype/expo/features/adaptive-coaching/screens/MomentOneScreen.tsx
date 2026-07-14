@@ -31,7 +31,7 @@ type MomentOneScreenProps = {
 };
 
 /**
- * "Who are you becoming?" — AE-001's Moment 1. Deliberately does NOT show a
+ * "Who Do You Want To Become?" — AE-001's Moment 1. Deliberately does NOT show a
  * thought stream: nothing is generated yet at this point in the slice
  * (Inspiration content is generated FROM this answer, not curated ahead of
  * it), so this screen is Speak/Type capture only, mirroring
@@ -138,7 +138,7 @@ export function MomentOneScreen({ voiceCapture, onSubmit }: MomentOneScreenProps
           >
             <View style={styles.topGroup}>
               <Text style={styles.title} accessibilityRole="header">
-                Who are you becoming?
+                Who Do You Want To Become?
               </Text>
               <BreathingOrb state={orbState} listening={speechAdapter.status === "listening"} reduceMotion={reduceMotion} />
             </View>
@@ -170,7 +170,7 @@ export function MomentOneScreen({ voiceCapture, onSubmit }: MomentOneScreenProps
                     value={visionText}
                     onChangeText={setVisionText}
                     inputRef={inputRef}
-                    placeholder="Who are you becoming?"
+                    placeholder="Who Do You Want To Become?"
                     inputAccessoryViewID={Platform.OS === "ios" ? VISION_INPUT_ACCESSORY_ID : undefined}
                   />
                 </Animated.View>

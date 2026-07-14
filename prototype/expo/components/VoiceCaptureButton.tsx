@@ -90,26 +90,17 @@ export function VoiceCaptureButton({ adapter, size = 64 }: VoiceCaptureButtonPro
 /**
  * A real microphone — capsule body, stand, and base — not a plain dot, so a
  * first-time user reads "this is where I speak" without a caption. Idle:
- * thin outline. Listening: filled warm accent with a small stop glyph
- * inset, instead of swapping the whole button to a solid red square.
+ * thin outline. Listening: the whole glyph swaps to a plain stop square
+ * (the same shape every "recording — tap to stop" affordance uses), so the
+ * button itself says "tap to stop" without requiring a caption to explain
+ * it — a subtler inset-square-on-a-mic version of this was tried first and
+ * user testing found it not obvious enough.
  */
 function MicGlyph({ listening }: { listening: boolean }) {
   if (listening) {
     return (
-      <Svg width={26} height={26} viewBox="0 0 26 26">
-        <Path
-          d="M13 3.5a3.5 3.5 0 0 1 3.5 3.5v5a3.5 3.5 0 0 1-7 0V7A3.5 3.5 0 0 1 13 3.5z"
-          fill={colors.accent}
-        />
-        <Path
-          d="M7 11.5v.5a6 6 0 0 0 12 0v-.5"
-          stroke={colors.accent}
-          strokeWidth={1.6}
-          strokeLinecap="round"
-          fill="none"
-        />
-        <Path d="M13 18.5V21.5" stroke={colors.accent} strokeWidth={1.6} strokeLinecap="round" />
-        <Rect x={9.5} y={10} width={7} height={7} rx={2} fill={colors.state.danger} />
+      <Svg width={24} height={24} viewBox="0 0 24 24">
+        <Rect x={4} y={4} width={16} height={16} rx={4} fill={colors.state.danger} />
       </Svg>
     );
   }

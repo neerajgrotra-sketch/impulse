@@ -46,6 +46,11 @@ type AdaptiveCoachingState = {
    *  the backend and reports the outcome via one of the *Received/*Failed
    *  actions below. */
   submitBecomingResponse: (text: string) => void;
+  /** Vision Canvas's back button — returns to Moment One so the user can
+   *  revise their "Who Do You Want To Become?" answer. Leaves thoughtPool /
+   *  visionCanvas / rankedDimensions as-is; submitBecomingResponse's next
+   *  generating-inspiration pass overwrites them regardless. */
+  goBackToMomentOne: () => void;
   inspirationReceived: (result: { rankedDimensions: RankedDimension[]; thoughts: GeneratedThought[] }, debug: DebugSnapshot) => void;
   inspirationHardStopped: (message: string) => void;
   inspirationFailed: (message: string) => void;
@@ -93,6 +98,8 @@ export const useAdaptiveCoachingStore = create<AdaptiveCoachingState>((set, get)
 
   submitBecomingResponse: (text) =>
     set({ becomingResponse: text.trim(), phase: { status: "generating-inspiration" } }),
+
+  goBackToMomentOne: () => set({ phase: { status: "moment-one" } }),
 
   inspirationReceived: (result, debug) =>
     set({

@@ -79,6 +79,10 @@ type ThoughtStreamProps = {
    *  mic, and card by the parent screen's layout, never by this component
    *  reaching outside it. */
   height?: number;
+  /** Overrides the default curated thought library — passed straight through
+   *  to `useThoughtScheduler`. AE-001's `VisionCanvasScreen` passes a source
+   *  built from the backend's AI-generated thought pool instead. */
+  thoughtSource?: () => Thought[];
 };
 
 /**
@@ -96,8 +100,12 @@ export function ThoughtStream({
   onSelectThought,
   onThoughtAppear,
   height = 96,
+  thoughtSource,
 }: ThoughtStreamProps) {
-  const { thought, phase } = useThoughtScheduler({ paused, reduceMotion, screenReaderEnabled });
+  // `thoughtSource` is `undefined` when the caller doesn't override it, and
+  // `useThoughtScheduler`'s own default parameter (`= createThoughtSequence`)
+  // applies to an explicit `undefined` just as it would to an omitted key.
+  const { thought, phase } = useThoughtScheduler({ paused, reduceMotion, screenReaderEnabled, thoughtSource });
   // Seeded from the window width so the first thought doesn't wait on a
   // real `onLayout` measurement (which never fires in some test/renderer
   // environments); refined the moment this view actually measures itself.

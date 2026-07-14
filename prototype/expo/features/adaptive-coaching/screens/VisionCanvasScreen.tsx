@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,11 +10,10 @@ import type { Thought } from "@/constants/thoughtLibrary";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useScreenReaderEnabled } from "@/hooks/useScreenReaderEnabled";
 import { useSpeechRecognitionAdapter } from "@/hooks/useSpeechRecognitionAdapter";
-import { useThoughtScheduler } from "@/hooks/useThoughtScheduler";
 import type { VoiceCapture } from "@/hooks/useVoiceCapture";
 import { isHardStopResponse, requestCoachingBeat, requestInspiration, toCalmUserMessage } from "@/services/onboardingTurnApi";
 import { MAX_VISION_FRAGMENTS, useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
-import { colors, spacing, typography } from "@/theme";
+import { colors, fontFamily, spacing, typography } from "@/theme";
 import { logTelemetryEvent } from "@/utils/telemetry";
 
 type VisionCanvasScreenProps = {
@@ -53,12 +52,33 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   const beatReceived = useAdaptiveCoachingStore((s) => s.beatReceived);
   const beatHardStopped = useAdaptiveCoachingStore((s) => s.beatHardStopped);
   const beatFailed = useAdaptiveCoachingStore((s) => s.beatFailed);
+  const goBackToMomentOne = useAdaptiveCoachingStore((s) => s.goBackToMomentOne);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [thoughtPulseSignal, setThoughtPulseSignal] = useState(0);
   const selectedCountRef = useRef(0);
   const editedCountRef = useRef(0);
   const deletedCountRef = useRef(0);
   const continueStartRef = useRef(Date.now());
+
+  // Extra bottom room inside the (already scrollable) canvas so a focused
+  // fragment card can be scrolled up above the keyboard — deliberately NOT a
+  // KeyboardAvoidingView around the whole screen: this screen's layout mixes
+  // fixed regions (topGroup, ThoughtStream, actionsRow, Continue) with one
+  // scrollable region (the canvas), and squeezing that whole flex stack to
+  // make room for the keyboard collapses the scrollable region instead of
+  // just letting it scroll further.
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Fires the one "generate inspiration" backend call exactly once, when
   // this phase is first reached — cleaned up on unmount via AbortController,
@@ -90,8 +110,16 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase.status]);
 
+  // Excludes anything already sitting in the Vision Canvas — otherwise the
+  // pool reshuffles in full every time the queue drains (useThoughtScheduler
+  // draws until empty, then calls this again) and an already-selected
+  // thought can drift back into view, where tapping it again silently added
+  // a second, duplicate fragment (handleSelectThought had no dedupe either —
+  // fixed there too, as a second line of defense against a thought that was
+  // already mid-queue when it got selected).
   const thoughtSource = (): Thought[] => {
-    const shuffled = [...thoughtPool];
+    const selectedTexts = new Set(visionCanvas.map((f) => f.text));
+    const shuffled = thoughtPool.filter((t) => !selectedTexts.has(t.text));
     for (let i = shuffled.length - 1; i > 0; i -= 1) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -105,15 +133,22 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
     speechAdapter.status === "processing" ||
     visionCanvas.length >= MAX_VISION_FRAGMENTS;
 
-  const { thought, phase: bubblePhase } = useThoughtScheduler({
-    paused,
-    reduceMotion,
-    screenReaderEnabled,
-    thoughtSource,
-  });
+  // Bumped once per new thought so BreathingOrb can fire its one-shot micro-
+  // pulse — same wiring IdentityInspirationScreen already uses; never fired
+  // under Reduce Motion (matches ThoughtStream's own onThoughtAppear
+  // contract, which already skips announcing under Reduce Motion).
+  function handleThoughtAppear() {
+    if (reduceMotion) return;
+    setThoughtPulseSignal((n) => n + 1);
+  }
 
   function handleSelectThought(t: Thought) {
     if (visionCanvas.length >= MAX_VISION_FRAGMENTS) return;
+    // Belt-and-suspenders against the same thought getting added twice — the
+    // scheduler's queue is pre-shuffled ahead of time, so a thought already
+    // in-flight there can still surface once more right after being picked,
+    // before thoughtSource's own dedupe gets a chance to exclude it.
+    if (visionCanvas.some((f) => f.text === t.text)) return;
     addVisionFragment({ text: t.text, origin: "thought_tap", edited: false });
     selectedCountRef.current += 1;
     logTelemetryEvent({ type: "thoughts_selected", count: selectedCountRef.current });
@@ -191,9 +226,32 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   return (
     <View style={styles.container}>
       <GradientBackground />
-      <View style={[styles.content, { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.lg }]}>
+      <Pressable
+        onPress={() => Keyboard.dismiss()}
+        accessible={false}
+        style={[styles.content, { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.lg }]}
+      >
+        <View style={styles.header}>
+          <Pressable
+            onPress={goBackToMomentOne}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Go back to the previous question"
+          >
+            <Text style={[typography.bodySecondary, styles.backLabel]}>{"‹ Back"}</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.topGroup}>
-          <BreathingOrb state={orbState} listening={speechAdapter.status === "listening"} reduceMotion={reduceMotion} />
+          <Text style={styles.title} accessibilityRole="header">
+            Tell Me More – What's in Your Mind
+          </Text>
+          <BreathingOrb
+            state={orbState}
+            listening={speechAdapter.status === "listening"}
+            thoughtPulseSignal={thoughtPulseSignal}
+            reduceMotion={reduceMotion}
+          />
           {isGenerating && (
             <Animated.Text entering={reduceMotion ? undefined : FadeIn.duration(400)} style={[typography.bodySecondary, styles.statusText]}>
               Getting to know what matters to you…
@@ -208,10 +266,18 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
               reduceMotion={reduceMotion}
               screenReaderEnabled={screenReaderEnabled}
               onSelectThought={handleSelectThought}
+              onThoughtAppear={handleThoughtAppear}
+              thoughtSource={thoughtSource}
               height={96}
             />
 
-            <ScrollView style={styles.canvasScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.canvasScroll}
+              contentContainerStyle={{ paddingBottom: keyboardHeight }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+            >
               <VisionCanvas
                 fragments={visionCanvas}
                 maxFragments={MAX_VISION_FRAGMENTS}
@@ -246,7 +312,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
             />
           </>
         )}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -254,7 +320,17 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background.gradientStart },
   content: { flex: 1, alignItems: "center", paddingHorizontal: spacing.lg, gap: spacing.md },
+  header: { width: "100%", alignItems: "flex-start" },
+  backLabel: { color: colors.inkSecondary },
   topGroup: { alignItems: "center", gap: spacing.sm },
+  title: {
+    fontFamily: fontFamily.serifRegular,
+    fontSize: 20,
+    lineHeight: 27,
+    color: colors.ink,
+    textAlign: "center",
+    paddingHorizontal: spacing.lg,
+  },
   statusText: { color: colors.inkSecondary },
   canvasScroll: { flex: 1, width: "100%" },
   actionsRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.lg },
