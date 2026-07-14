@@ -18,15 +18,19 @@ type BreathingOrbProps = {
 };
 
 /**
- * Wraps the existing `VoiceOrb` (left unmodified) with the listening-only
- * glow ripple, slight expansion, and "Listening…" label Phase 6 calls for —
- * so the orb component itself stays exactly as it is everywhere else in
- * onboarding, and this extra behavior only ever applies here.
+ * Wraps the existing `VoiceOrb` (left unmodified) with state-driven glow —
+ * an expanding ripple + slight expansion while listening, a soft non-
+ * expanding shimmer while processing, and a subtle brightness boost while
+ * typing — all built on the same `active`/`pulse`/`boost` shared values so
+ * no state introduces a new animation system. The orb itself never stops
+ * breathing; these only layer on top.
  */
 export function BreathingOrb({ state, listening, size = 140 }: BreathingOrbProps) {
   const active = useSharedValue(0);
   const pulse = useSharedValue(0);
   const boost = useSharedValue(1);
+  const processing = state === "processing" && !listening;
+  const typing = state === "typing" && !listening;
 
   useEffect(() => {
     if (listening) {
@@ -38,18 +42,36 @@ export function BreathingOrb({ state, listening, size = 140 }: BreathingOrbProps
         -1,
         false
       );
+    } else if (processing) {
+      // Soft shimmer: a slow opacity breathe, no expanding ring — distinct
+      // from listening's outward pulse.
+      active.value = withTiming(1, { duration: 200 });
+      boost.value = withTiming(1, { duration: 300 });
+      pulse.value = withRepeat(withTiming(1, { duration: 900, easing: Easing.inOut(Easing.ease) }), -1, true);
+    } else if (typing) {
+      active.value = withTiming(0, { duration: 200 });
+      boost.value = withTiming(1.03, { duration: 300 });
+      cancelAnimation(pulse);
     } else {
       active.value = withTiming(0, { duration: 200 });
       boost.value = withTiming(1, { duration: 300 });
       cancelAnimation(pulse);
     }
     return () => cancelAnimation(pulse);
-  }, [listening, active, boost, pulse]);
+  }, [listening, processing, typing, active, boost, pulse]);
 
-  const rippleStyle = useAnimatedStyle(() => ({
-    opacity: active.value * (1 - pulse.value) * 0.45,
-    transform: [{ scale: 1 + pulse.value * 0.4 }],
-  }));
+  const rippleStyle = useAnimatedStyle(() => {
+    if (processing) {
+      return {
+        opacity: active.value * pulse.value * 0.35,
+        transform: [{ scale: 1 }],
+      };
+    }
+    return {
+      opacity: active.value * (1 - pulse.value) * 0.45,
+      transform: [{ scale: 1 + pulse.value * 0.4 }],
+    };
+  });
 
   const boostStyle = useAnimatedStyle(() => ({
     transform: [{ scale: boost.value }],

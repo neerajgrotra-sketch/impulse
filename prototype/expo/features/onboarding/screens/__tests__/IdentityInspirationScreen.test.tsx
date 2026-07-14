@@ -55,10 +55,9 @@ describe("IdentityInspirationScreen", () => {
     jest.clearAllTimers();
   });
 
-  it("populates the vision card when a thought is tapped, permanently stops the stream, and lets edits persist", async () => {
+  it("populates the vision card when a thought is tapped without auto-focusing, and never lets a later thought tap overwrite an edit", async () => {
     const onSubmit = jest.fn();
-    const { getAllByLabelText, getByLabelText, getByDisplayValue, queryAllByLabelText } =
-      await renderScreen(onSubmit);
+    const { getAllByLabelText, getByLabelText, getByDisplayValue } = await renderScreen(onSubmit);
 
     await act(async () => {
       jest.advanceTimersByTime(THOUGHT_INITIAL_DELAY_MS + THOUGHT_ENTER_DURATION_MS);
@@ -74,12 +73,29 @@ describe("IdentityInspirationScreen", () => {
     await fireEvent.changeText(input, "I am someone who follows through, edited by hand.");
     expect(getByDisplayValue("I am someone who follows through, edited by hand.")).toBeTruthy();
 
-    // Selecting a thought stops the stream for good — no more bubbles ever,
-    // even if we wait through several more would-be cycles.
+    // The stream stays ambient (ThoughtStream itself only pauses for the
+    // keyboard/voice/backgrounding — ​not for a revealed card, PDR 0008), but
+    // once the card is revealed, tapping a bubble must never clobber content
+    // the user already committed to.
     await act(async () => {
       jest.advanceTimersByTime(30_000);
     });
-    expect(queryAllByLabelText(/^Use this thought:/)).toHaveLength(0);
+    const laterThoughtButtons = getAllByLabelText(/^Use this thought:/);
+    if (laterThoughtButtons.length > 0) {
+      await fireEvent.press(laterThoughtButtons[0]);
+    }
+    expect(getByDisplayValue("I am someone who follows through, edited by hand.")).toBeTruthy();
+  });
+
+  it("shows no vision card in Reflection Mode, and reveals it only once Type is pressed", async () => {
+    const onSubmit = jest.fn();
+    const { getByLabelText, queryByLabelText } = await renderScreen(onSubmit);
+
+    expect(queryByLabelText("Your vision")).toBeNull();
+
+    await fireEvent.press(getByLabelText("Type your vision instead"));
+
+    expect(getByLabelText("Your vision")).toBeTruthy();
   });
 
   it("keeps Continue disabled until there is meaningful content, then submits the edited text", async () => {

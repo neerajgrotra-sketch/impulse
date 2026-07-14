@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AppState,
+  InputAccessoryView,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,6 +14,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
+import Svg, { Line, Rect } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   BreathingOrb,
@@ -27,7 +31,7 @@ import type { QuestionVoice } from "@/hooks/useQuestionVoice";
 import { useScreenReaderEnabled } from "@/hooks/useScreenReaderEnabled";
 import { useSpeechRecognitionAdapter } from "@/hooks/useSpeechRecognitionAdapter";
 import type { VoiceCapture } from "@/hooks/useVoiceCapture";
-import { colors, fontFamily, spacing, typography } from "@/theme";
+import { colors, fontFamily, radius, spacing, typography } from "@/theme";
 import type { OnboardingQuestion } from "@/types/onboarding";
 import { deriveIdentityStatement } from "@/utils/identityStatement";
 
@@ -38,12 +42,26 @@ type IdentityInspirationScreenProps = {
   onSubmit: (statement: string) => void;
 };
 
+const VISION_INPUT_ACCESSORY_ID = "identity-vision-done-editing";
+// How long to hold the thought stream paused after the keyboard hides,
+// so "reflection resumes" reads as a settling breath, not an instant snap
+// back — see the animation spec this screen implements (PDR 0008).
+const THOUGHT_RESUME_DELAY_MS = 500;
+
 /**
  * The identity-capture screen's coordinator (Phase 2): owns which state
  * each piece is in — thought stream, voice capture, vision card — and wires
  * them together, but contains none of their animation implementation
  * details itself. Those live in `ThoughtStream`, `BreathingOrb`,
  * `VoiceCaptureButton`, and `EditableVisionCard`.
+ *
+ * Interaction model (PDR 0008): Reflection Mode (orb + thoughts + Speak/Type
+ * choice, no keyboard) → Capture Mode (Speak keeps the keyboard hidden;
+ * Type reveals and focuses the card) → a settled post-edit state (card
+ * visible, keyboard dismissed, Continue available). The keyboard only ever
+ * appears via the explicit Type action or an explicit tap back into an
+ * already-settled card — never as a side effect of picking a thought or
+ * finishing a voice recording.
  */
 export function IdentityInspirationScreen({
   question,
@@ -58,19 +76,57 @@ export function IdentityInspirationScreen({
 
   const [visionText, setVisionText] = useState("");
   const [cardRevealed, setCardRevealed] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  // Distinct from `keyboardVisible`: this stays true for a beat after the
+  // keyboard actually hides, so the thought stream's return reads as a
+  // deliberate resettling rather than an instant snap-back.
+  const [thoughtsSuppressedByKeyboard, setThoughtsSuppressedByKeyboard] = useState(false);
   // A screen only ever mounts while the app is already foregrounded, so
   // start active and rely on the listener below purely for transitions.
   const [appActive, setAppActive] = useState(true);
   const inputRef = useRef<TextInput>(null);
   const lastHandledTranscriptRef = useRef<string | null>(null);
-  // Only the tap-a-thought and write-your-own paths pop the keyboard
-  // automatically — a voice-completion reveal leaves focus alone so the
-  // user can read what was heard before deciding to edit it.
+  // Only the explicit Type action pops the keyboard automatically — a
+  // thought tap, "write your own" is gone, and a voice-completion reveal all
+  // leave focus alone so the user can see what's there before editing it.
   const pendingAutoFocusRef = useRef(false);
+  const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (next) => setAppActive(next === "active"));
     return () => subscription.remove();
+  }, []);
+
+  // Keyboard visibility drives the orb's "typing" state and the thought
+  // stream's pause — not TextInput focus directly, since dismissal can come
+  // from several places (Done Editing, tap-outside, drag) that all funnel
+  // through the same OS keyboard show/hide events.
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSubscription = Keyboard.addListener(showEvent, () => {
+      if (resumeTimeoutRef.current) {
+        clearTimeout(resumeTimeoutRef.current);
+        resumeTimeoutRef.current = null;
+      }
+      setKeyboardVisible(true);
+      setThoughtsSuppressedByKeyboard(true);
+    });
+
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      resumeTimeoutRef.current = setTimeout(() => {
+        resumeTimeoutRef.current = null;
+        setThoughtsSuppressedByKeyboard(false);
+      }, THOUGHT_RESUME_DELAY_MS);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+      if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
+    };
   }, []);
 
   // Speaks the title once, same as every other question in this flow —
@@ -102,23 +158,27 @@ export function IdentityInspirationScreen({
   }, [cardRevealed]);
 
   function handleSelectThought(thought: Thought) {
-    pendingAutoFocusRef.current = true;
+    // Once the card is revealed, the stream is ambient reflection only —
+    // never lets a stray tap silently overwrite what the user already has.
+    if (cardRevealed) return;
     setVisionText(deriveIdentityStatement(thought.text));
     setCardRevealed(true);
   }
 
-  function handleWriteOwn() {
+  function handleType() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     pendingAutoFocusRef.current = true;
     setVisionText("");
     setCardRevealed(true);
   }
 
-  // Once the card is revealed the stream never comes back for this screen —
-  // "do not automatically continue" cuts both ways, the suggestion phase is
-  // over the moment the user commits to one.
+  function handleDoneEditing() {
+    inputRef.current?.blur();
+    Keyboard.dismiss();
+  }
+
   const paused =
-    cardRevealed ||
+    thoughtsSuppressedByKeyboard ||
     speechAdapter.status === "listening" ||
     speechAdapter.status === "processing" ||
     !appActive;
@@ -127,7 +187,11 @@ export function IdentityInspirationScreen({
     ? "speaking"
     : speechAdapter.status === "listening"
       ? "listening"
-      : "idle";
+      : speechAdapter.status === "processing"
+        ? "processing"
+        : keyboardVisible
+          ? "typing"
+          : "idle";
 
   const canContinue = visionText.trim().length > 0;
 
@@ -140,66 +204,140 @@ export function IdentityInspirationScreen({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={insets.top}
       >
-        <View
-          style={[
-            styles.content,
-            { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.lg },
-          ]}
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
         >
-          <View style={styles.topGroup}>
-            <Text style={styles.title} accessibilityRole="header">
-              {question.text}
-            </Text>
+          <Pressable
+            onPress={() => Keyboard.dismiss()}
+            accessible={false}
+            style={[
+              styles.content,
+              { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.lg },
+            ]}
+          >
+            <View style={styles.topGroup}>
+              <Text style={styles.title} accessibilityRole="header">
+                {question.text}
+              </Text>
 
-            {!cardRevealed && (
-              <Text style={styles.subtitle}>Tap a thought that fits, or write your own.</Text>
-            )}
+              <BreathingOrb state={orbState} listening={speechAdapter.status === "listening"} />
 
-            <BreathingOrb state={orbState} listening={speechAdapter.status === "listening"} />
+              <ThoughtStream
+                paused={paused}
+                reduceMotion={reduceMotion}
+                screenReaderEnabled={screenReaderEnabled}
+                onSelectThought={handleSelectThought}
+                height={110}
+              />
+            </View>
 
-            <ThoughtStream
-              paused={paused}
-              reduceMotion={reduceMotion}
-              screenReaderEnabled={screenReaderEnabled}
-              onSelectThought={handleSelectThought}
-              height={110}
-            />
+            <View style={styles.bottomSlot}>
+              {!cardRevealed && (
+                <Animated.View
+                  entering={reduceMotion ? undefined : FadeIn.duration(400)}
+                  style={styles.choicePanel}
+                >
+                  <Text style={[typography.eyebrow, styles.label]}>YOUR VISION</Text>
+                  <Text style={[typography.caption, styles.choiceHelper]}>
+                    You can speak, write, or tap a thought to begin.
+                  </Text>
 
-            {!cardRevealed && (
-              <Pressable
-                onPress={handleWriteOwn}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Write your own vision instead"
-              >
-                <Text style={styles.writeOwn}>Or write your own</Text>
-              </Pressable>
-            )}
-          </View>
+                  <VoiceCaptureButton adapter={speechAdapter} />
 
-          <View style={styles.bottomSlot}>
-            {cardRevealed && (
-              <Animated.View entering={FadeIn.duration(400)} layout={LinearTransition} style={styles.cardWrap}>
-                <EditableVisionCard value={visionText} onChangeText={setVisionText} inputRef={inputRef} />
-              </Animated.View>
-            )}
+                  <View style={styles.dividerRow} accessible={false}>
+                    <View style={styles.dividerLine} />
+                    <Text style={[typography.caption, styles.dividerText]}>OR</Text>
+                    <View style={styles.dividerLine} />
+                  </View>
 
-            {cardRevealed && (
-              <Text style={styles.reviseNote}>You can always come back and change this later.</Text>
-            )}
+                  <Pressable
+                    onPress={handleType}
+                    hitSlop={8}
+                    style={styles.typeButton}
+                    accessibilityRole="button"
+                    accessibilityLabel="Type your vision instead"
+                  >
+                    <TypeIcon />
+                    <Text style={[typography.bodySecondary, styles.typeLabel]}>Type</Text>
+                  </Pressable>
+                </Animated.View>
+              )}
 
-            <VoiceCaptureButton adapter={speechAdapter} />
+              {cardRevealed && (
+                <Animated.View
+                  entering={reduceMotion ? undefined : FadeIn.duration(400)}
+                  layout={reduceMotion ? undefined : LinearTransition}
+                  style={styles.cardWrap}
+                >
+                  <EditableVisionCard
+                    value={visionText}
+                    onChangeText={setVisionText}
+                    inputRef={inputRef}
+                    inputAccessoryViewID={Platform.OS === "ios" ? VISION_INPUT_ACCESSORY_ID : undefined}
+                  />
+                </Animated.View>
+              )}
 
-            <PrimaryButton
-              label="Continue"
-              onPress={() => onSubmit(visionText)}
-              fullWidth
-              disabled={!canContinue}
-            />
-          </View>
-        </View>
+              {cardRevealed && (
+                <Text style={styles.reviseNote}>You can always come back and change this later.</Text>
+              )}
+
+              {cardRevealed && <VoiceCaptureButton adapter={speechAdapter} />}
+
+              {keyboardVisible && (
+                <Pressable
+                  onPress={handleDoneEditing}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Done editing your vision"
+                >
+                  <Text style={[typography.caption, styles.doneEditing]}>Done editing</Text>
+                </Pressable>
+              )}
+
+              <PrimaryButton
+                label="Continue"
+                onPress={() => onSubmit(visionText)}
+                fullWidth
+                disabled={!canContinue}
+              />
+            </View>
+          </Pressable>
+        </ScrollView>
       </KeyboardAvoidingView>
+
+      {Platform.OS === "ios" && (
+        <InputAccessoryView nativeID={VISION_INPUT_ACCESSORY_ID}>
+          <View style={styles.accessoryBar}>
+            <Pressable
+              onPress={handleDoneEditing}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Done editing your vision"
+            >
+              <Text style={styles.accessoryDone}>Done Editing</Text>
+            </Pressable>
+          </View>
+        </InputAccessoryView>
+      )}
     </View>
+  );
+}
+
+function TypeIcon() {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+      <Rect x={2} y={5} width={20} height={14} rx={2.5} stroke={colors.inkSecondary} strokeWidth={1.6} />
+      <Line x1={6} y1={9.5} x2={6} y2={9.5} stroke={colors.inkSecondary} strokeWidth={2} strokeLinecap="round" />
+      <Line x1={10} y1={9.5} x2={10} y2={9.5} stroke={colors.inkSecondary} strokeWidth={2} strokeLinecap="round" />
+      <Line x1={14} y1={9.5} x2={14} y2={9.5} stroke={colors.inkSecondary} strokeWidth={2} strokeLinecap="round" />
+      <Line x1={18} y1={9.5} x2={18} y2={9.5} stroke={colors.inkSecondary} strokeWidth={2} strokeLinecap="round" />
+      <Line x1={7} y1={15} x2={17} y2={15} stroke={colors.inkSecondary} strokeWidth={1.8} strokeLinecap="round" />
+    </Svg>
   );
 }
 
@@ -210,6 +348,9 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   content: {
     flex: 1,
@@ -230,19 +371,9 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: spacing.lg,
   },
-  subtitle: {
-    ...typography.caption,
-    textAlign: "center",
-  },
   reviseNote: {
     ...typography.caption,
     textAlign: "center",
-  },
-  writeOwn: {
-    fontSize: 15,
-    lineHeight: 21,
-    color: colors.inkSecondary,
-    textDecorationLine: "underline",
   },
   bottomSlot: {
     width: "100%",
@@ -251,5 +382,63 @@ const styles = StyleSheet.create({
   },
   cardWrap: {
     width: "100%",
+  },
+  choicePanel: {
+    width: "100%",
+    borderWidth: 1,
+    borderColor: colors.overlay.hairline,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.sm,
+    backgroundColor: colors.overlay.scrim,
+    alignItems: "center",
+  },
+  label: {
+    letterSpacing: 1.4,
+  },
+  choiceHelper: {
+    textAlign: "center",
+  },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    width: "100%",
+    gap: spacing.sm,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.overlay.hairline,
+  },
+  dividerText: {
+    letterSpacing: 1,
+  },
+  typeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  typeLabel: {
+    color: colors.inkSecondary,
+  },
+  doneEditing: {
+    textDecorationLine: "underline",
+  },
+  accessoryBar: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.background.gradientEnd,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.overlay.hairline,
+  },
+  accessoryDone: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: "600",
+    color: colors.accent,
   },
 });

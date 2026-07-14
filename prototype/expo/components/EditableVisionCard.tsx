@@ -9,6 +9,10 @@ type EditableVisionCardProps = {
   onChangeText: (text: string) => void;
   inputRef: RefObject<TextInput | null>;
   placeholder?: string;
+  /** iOS-only: ties this input to an `InputAccessoryView` (the "Done
+   *  Editing" bar) rendered by the parent screen. Undefined on Android,
+   *  where there's no accessory-view concept. */
+  inputAccessoryViewID?: string;
 };
 
 /**
@@ -22,6 +26,7 @@ export function EditableVisionCard({
   onChangeText,
   inputRef,
   placeholder = "I am someone who…",
+  inputAccessoryViewID,
 }: EditableVisionCardProps) {
   const [focused, setFocused] = useState(false);
 
@@ -43,8 +48,15 @@ export function EditableVisionCard({
         placeholderTextColor={colors.inkTertiary}
         multiline
         textAlignVertical="top"
+        inputAccessoryViewID={inputAccessoryViewID}
         accessibilityLabel="Your vision"
         accessibilityHint="Edit the identity statement you want to carry into onboarding"
+        accessibilityActions={[{ name: "escape", label: "Done editing" }]}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === "escape") {
+            inputRef.current?.blur();
+          }
+        }}
       />
 
       {!focused && <Text style={[typography.caption, styles.helper]}>Tap anywhere to edit</Text>}
