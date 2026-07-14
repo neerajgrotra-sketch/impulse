@@ -9,7 +9,7 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
 
-export type VoiceOrbState = "idle" | "listening" | "speaking" | "typing" | "processing";
+export type VoiceOrbState = "idle" | "listening" | "speaking" | "typing" | "processing" | "finished" | "error";
 
 type VoiceOrbProps = {
   state: VoiceOrbState;
@@ -18,13 +18,17 @@ type VoiceOrbProps = {
 
 /** Cycle duration per state, in ms — ported from VoiceOrbView.swift's `cycleDuration`.
  *  `typing` and `processing` breathe slightly faster than idle so the orb reads as
- *  subtly more alive during those states without inventing a new animation system. */
+ *  subtly more alive during those states without inventing a new animation system.
+ *  `finished` and `error` are brief, transient states layered on `BreathingOrb` —
+ *  the base breathing loop underneath keeps running at the idle cadence. */
 const CYCLE_DURATION: Record<VoiceOrbState, number> = {
   idle: 4000,
   listening: 4000,
   speaking: 1000,
   typing: 3200,
   processing: 2400,
+  finished: 4000,
+  error: 4000,
 };
 
 /**

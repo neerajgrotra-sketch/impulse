@@ -13,7 +13,14 @@ import {
   View,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
+import Animated, {
+  Easing,
+  FadeIn,
+  LinearTransition,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import Svg, { Line, Rect } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -43,25 +50,35 @@ type IdentityInspirationScreenProps = {
 };
 
 const VISION_INPUT_ACCESSORY_ID = "identity-vision-done-editing";
-// How long to hold the thought stream paused after the keyboard hides,
-// so "reflection resumes" reads as a settling breath, not an instant snap
-// back — see the animation spec this screen implements (PDR 0008).
+// How long to hold the thought stream paused after the keyboard hides, so
+// "reflection resumes" reads as a settling breath, not an instant snap back.
 const THOUGHT_RESUME_DELAY_MS = 500;
+// How long the orb's one-shot "Finished" acknowledgment and the transcript
+// overlay's crossfade window stay active after a recording settles.
+const FINISHED_WINDOW_MS = 900;
 
 /**
- * The identity-capture screen's coordinator (Phase 2): owns which state
- * each piece is in — thought stream, voice capture, vision card — and wires
- * them together, but contains none of their animation implementation
- * details itself. Those live in `ThoughtStream`, `BreathingOrb`,
- * `VoiceCaptureButton`, and `EditableVisionCard`.
+ * The identity-capture screen's coordinator: owns which state each piece is
+ * in — thought stream, voice capture, vision card — and wires them
+ * together, but contains none of their animation implementation details
+ * itself. Those live in `ThoughtStream`, `BreathingOrb`, `VoiceCaptureButton`,
+ * and `EditableVisionCard`.
  *
- * Interaction model (PDR 0008): Reflection Mode (orb + thoughts + Speak/Type
- * choice, no keyboard) → Capture Mode (Speak keeps the keyboard hidden;
- * Type reveals and focuses the card) → a settled post-edit state (card
- * visible, keyboard dismissed, Continue available). The keyboard only ever
- * appears via the explicit Type action or an explicit tap back into an
- * already-settled card — never as a side effect of picking a thought or
- * finishing a voice recording.
+ * Interaction model (PDR 0008, choreographed in PDR 0009 /
+ * docs/identity-onboarding-choreography.md): Reflection Mode (orb + thoughts
+ * + Speak/Type choice, no keyboard) → Capture Mode (Speak keeps the
+ * keyboard hidden, live transcript takes the visual center; Type reveals
+ * and focuses the card) → a settled state (card visible, keyboard
+ * dismissed, Continue available, Clear/Record-Again always reachable). The
+ * keyboard only ever appears via the explicit Type action or an explicit
+ * tap back into an already-settled card.
+ *
+ * Voice transcripts are used verbatim, never blindly wrapped — that
+ * wrapping is what produced "I am someone who is i wanna be perfect" in the
+ * pre-redesign build. `deriveIdentityStatement` still normalizes the
+ * curated thought-library fragments (a controlled, tested input space where
+ * the wrap is safe); a confidence-based rewrite *suggestion* for freeform
+ * speech/typed text is Phase 2 (PDR 0009 §8.1 — deliberately not built yet).
  */
 export function IdentityInspirationScreen({
   question,
@@ -77,20 +94,35 @@ export function IdentityInspirationScreen({
   const [visionText, setVisionText] = useState("");
   const [cardRevealed, setCardRevealed] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  // Distinct from `keyboardVisible`: this stays true for a beat after the
+  // Distinct from `keyboardVisible`: stays true for a beat after the
   // keyboard actually hides, so the thought stream's return reads as a
   // deliberate resettling rather than an instant snap-back.
   const [thoughtsSuppressedByKeyboard, setThoughtsSuppressedByKeyboard] = useState(false);
+  // Mirrors the live transcript only while actually listening, then holds
+  // its last value through the processing settle window — so the
+  // transcript overlay has real words to ease down with, not a blank flash.
+  const [displayTranscript, setDisplayTranscript] = useState("");
+  // Transient window right after a voice recording settles — drives the
+  // orb's one-shot Finished pulse and the transcript-overlay crossfade.
+  const [justFinishedVoice, setJustFinishedVoice] = useState(false);
+  const [thoughtPulseSignal, setThoughtPulseSignal] = useState(0);
   // A screen only ever mounts while the app is already foregrounded, so
   // start active and rely on the listener below purely for transitions.
   const [appActive, setAppActive] = useState(true);
   const inputRef = useRef<TextInput>(null);
   const lastHandledTranscriptRef = useRef<string | null>(null);
   // Only the explicit Type action pops the keyboard automatically — a
-  // thought tap, "write your own" is gone, and a voice-completion reveal all
-  // leave focus alone so the user can see what's there before editing it.
+  // thought tap or a voice-completion reveal both leave focus alone so the
+  // user can see what's there before editing it.
   const pendingAutoFocusRef = useRef(false);
   const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const micScale = useSharedValue(1);
+  const transcriptScale = useSharedValue(1);
+  const cardScale = useSharedValue(0.92);
+  const cardOpacity = useSharedValue(0);
+  const continueEmphasis = useSharedValue(0);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (next) => setAppActive(next === "active"));
@@ -141,14 +173,36 @@ export function IdentityInspirationScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [question.id]);
 
+  // The live transcript overlay's content: mirrors partial speech while
+  // listening, then holds (doesn't clear) through processing so the settle
+  // animation has real words to ease down with; clears once truly idle.
+  useEffect(() => {
+    if (speechAdapter.status === "listening") {
+      setDisplayTranscript(speechAdapter.partialTranscript);
+    } else if (speechAdapter.status === "idle") {
+      setDisplayTranscript("");
+    }
+  }, [speechAdapter.status, speechAdapter.partialTranscript]);
+
   useEffect(() => {
     if (speechAdapter.status !== "completed") return;
+    // Used verbatim — never re-wrapped. See the function-level doc comment.
     const transcript = speechAdapter.finalTranscript.trim();
     if (!transcript || lastHandledTranscriptRef.current === transcript) return;
     lastHandledTranscriptRef.current = transcript;
-    setVisionText(deriveIdentityStatement(transcript));
+    setVisionText(transcript);
     setCardRevealed(true);
+    setJustFinishedVoice(true);
+    if (finishedTimeoutRef.current) clearTimeout(finishedTimeoutRef.current);
+    finishedTimeoutRef.current = setTimeout(() => setJustFinishedVoice(false), FINISHED_WINDOW_MS);
   }, [speechAdapter.status, speechAdapter.finalTranscript]);
+
+  useEffect(
+    () => () => {
+      if (finishedTimeoutRef.current) clearTimeout(finishedTimeoutRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     if (cardRevealed && pendingAutoFocusRef.current) {
@@ -157,12 +211,75 @@ export function IdentityInspirationScreen({
     }
   }, [cardRevealed]);
 
+  // Mic gently shrinks the instant it's actively listening — ceding the
+  // screen's center to the transcript overlay, not competing with it.
+  useEffect(() => {
+    if (reduceMotion) {
+      micScale.value = 1;
+      return;
+    }
+    micScale.value = withTiming(speechAdapter.status === "listening" ? 0.85 : 1, {
+      duration: 250,
+      easing: Easing.out(Easing.ease),
+    });
+  }, [speechAdapter.status, reduceMotion, micScale]);
+
+  // The transcript overlay settles from its large "spoken aloud" size down
+  // toward the vision card's normal body size as processing completes —
+  // the felt half of the transcript→card morph (the crossfade is the rest).
+  useEffect(() => {
+    if (reduceMotion) {
+      transcriptScale.value = 1;
+      return;
+    }
+    if (speechAdapter.status === "listening") {
+      transcriptScale.value = withTiming(1, { duration: 200 });
+    } else if (speechAdapter.status === "processing") {
+      transcriptScale.value = withTiming(0.6, { duration: 400, easing: Easing.inOut(Easing.ease) });
+    }
+  }, [speechAdapter.status, reduceMotion, transcriptScale]);
+
+  // The card grows into place rather than snapping in — the same
+  // "emergence" quality for both the Type path and the voice-completion
+  // path. Resets to its pre-entrance values on Clear so the next reveal
+  // grows in again instead of already being fully visible.
+  useEffect(() => {
+    if (!cardRevealed) {
+      cardScale.value = 0.92;
+      cardOpacity.value = 0;
+      return;
+    }
+    if (reduceMotion) {
+      cardScale.value = 1;
+      cardOpacity.value = 1;
+      return;
+    }
+    cardScale.value = withTiming(1, { duration: 450, easing: Easing.out(Easing.ease) });
+    cardOpacity.value = withTiming(1, { duration: 400 });
+  }, [cardRevealed, reduceMotion, cardScale, cardOpacity]);
+
+  // Continue doesn't appear active the instant content exists — it eases
+  // in once, then holds, so enabling reads as "you've arrived somewhere,"
+  // not a form field flipping valid.
+  useEffect(() => {
+    const visionTrimmedLength = visionText.trim().length;
+    continueEmphasis.value = withTiming(visionTrimmedLength > 0 ? 1 : 0, {
+      duration: reduceMotion ? 0 : 450,
+      easing: Easing.out(Easing.ease),
+    });
+  }, [visionText, reduceMotion, continueEmphasis]);
+
   function handleSelectThought(thought: Thought) {
     // Once the card is revealed, the stream is ambient reflection only —
     // never lets a stray tap silently overwrite what the user already has.
     if (cardRevealed) return;
     setVisionText(deriveIdentityStatement(thought.text));
     setCardRevealed(true);
+  }
+
+  function handleThoughtAppear() {
+    if (reduceMotion) return;
+    setThoughtPulseSignal((n) => n + 1);
   }
 
   function handleType() {
@@ -177,23 +294,52 @@ export function IdentityInspirationScreen({
     Keyboard.dismiss();
   }
 
+  function handleClear() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    speechAdapter.cancel();
+    lastHandledTranscriptRef.current = null;
+    pendingAutoFocusRef.current = false;
+    setJustFinishedVoice(false);
+    setVisionText("");
+    setCardRevealed(false);
+  }
+
   const paused =
     thoughtsSuppressedByKeyboard ||
     speechAdapter.status === "listening" ||
     speechAdapter.status === "processing" ||
     !appActive;
 
-  const orbState: VoiceOrbState = questionVoice.isSpeaking
-    ? "speaking"
-    : speechAdapter.status === "listening"
-      ? "listening"
-      : speechAdapter.status === "processing"
-        ? "processing"
-        : keyboardVisible
-          ? "typing"
-          : "idle";
+  const orbState: VoiceOrbState =
+    speechAdapter.status === "error"
+      ? "error"
+      : questionVoice.isSpeaking
+        ? "speaking"
+        : speechAdapter.status === "listening"
+          ? "listening"
+          : speechAdapter.status === "processing"
+            ? "processing"
+            : justFinishedVoice
+              ? "finished"
+              : keyboardVisible
+                ? "typing"
+                : "idle";
 
   const canContinue = visionText.trim().length > 0;
+  const showTranscriptOverlay =
+    (speechAdapter.status === "listening" || speechAdapter.status === "processing") &&
+    displayTranscript.trim().length > 0;
+
+  const micAnimatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: micScale.value }] }));
+  const transcriptAnimatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: transcriptScale.value }] }));
+  const cardAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value,
+    transform: [{ scale: cardScale.value }],
+  }));
+  const continueAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: 0.55 + continueEmphasis.value * 0.45,
+    transform: [{ scale: 0.98 + continueEmphasis.value * 0.02 }],
+  }));
 
   return (
     <View style={styles.container}>
@@ -224,13 +370,19 @@ export function IdentityInspirationScreen({
                 {question.text}
               </Text>
 
-              <BreathingOrb state={orbState} listening={speechAdapter.status === "listening"} />
+              <BreathingOrb
+                state={orbState}
+                listening={speechAdapter.status === "listening"}
+                thoughtPulseSignal={thoughtPulseSignal}
+                reduceMotion={reduceMotion}
+              />
 
               <ThoughtStream
                 paused={paused}
                 reduceMotion={reduceMotion}
                 screenReaderEnabled={screenReaderEnabled}
                 onSelectThought={handleSelectThought}
+                onThoughtAppear={handleThoughtAppear}
                 height={110}
               />
             </View>
@@ -246,7 +398,9 @@ export function IdentityInspirationScreen({
                     You can speak, write, or tap a thought to begin.
                   </Text>
 
-                  <VoiceCaptureButton adapter={speechAdapter} />
+                  <Animated.View style={micAnimatedStyle}>
+                    <VoiceCaptureButton adapter={speechAdapter} />
+                  </Animated.View>
 
                   <View style={styles.dividerRow} accessible={false}>
                     <View style={styles.dividerLine} />
@@ -269,9 +423,8 @@ export function IdentityInspirationScreen({
 
               {cardRevealed && (
                 <Animated.View
-                  entering={reduceMotion ? undefined : FadeIn.duration(400)}
                   layout={reduceMotion ? undefined : LinearTransition}
-                  style={styles.cardWrap}
+                  style={[styles.cardWrap, cardAnimatedStyle]}
                 >
                   <EditableVisionCard
                     value={visionText}
@@ -286,7 +439,22 @@ export function IdentityInspirationScreen({
                 <Text style={styles.reviseNote}>You can always come back and change this later.</Text>
               )}
 
-              {cardRevealed && <VoiceCaptureButton adapter={speechAdapter} />}
+              {cardRevealed && (
+                <Animated.View style={micAnimatedStyle}>
+                  <VoiceCaptureButton adapter={speechAdapter} />
+                </Animated.View>
+              )}
+
+              {cardRevealed && !keyboardVisible && (
+                <Pressable
+                  onPress={handleClear}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear your vision and start over"
+                >
+                  <Text style={[typography.caption, styles.clearLabel]}>Clear</Text>
+                </Pressable>
+              )}
 
               {keyboardVisible && (
                 <Pressable
@@ -299,16 +467,28 @@ export function IdentityInspirationScreen({
                 </Pressable>
               )}
 
-              <PrimaryButton
-                label="Continue"
-                onPress={() => onSubmit(visionText)}
-                fullWidth
-                disabled={!canContinue}
-              />
+              <Animated.View style={continueAnimatedStyle}>
+                <PrimaryButton
+                  label="Continue"
+                  onPress={() => onSubmit(visionText)}
+                  fullWidth
+                  disabled={!canContinue}
+                />
+              </Animated.View>
             </View>
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {showTranscriptOverlay && (
+        <View pointerEvents="none" style={styles.transcriptOverlay}>
+          <Animated.View style={transcriptAnimatedStyle}>
+            <Text style={[typography.display, styles.transcriptText]} numberOfLines={6}>
+              {displayTranscript}
+            </Text>
+          </Animated.View>
+        </View>
+      )}
 
       {Platform.OS === "ios" && (
         <InputAccessoryView nativeID={VISION_INPUT_ACCESSORY_ID}>
@@ -423,8 +603,24 @@ const styles = StyleSheet.create({
   typeLabel: {
     color: colors.inkSecondary,
   },
+  clearLabel: {
+    textDecorationLine: "underline",
+  },
   doneEditing: {
     textDecorationLine: "underline",
+  },
+  transcriptOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+  },
+  transcriptText: {
+    textAlign: "center",
   },
   accessoryBar: {
     flexDirection: "row",

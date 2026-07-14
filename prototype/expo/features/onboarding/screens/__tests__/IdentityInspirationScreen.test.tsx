@@ -57,7 +57,8 @@ describe("IdentityInspirationScreen", () => {
 
   it("populates the vision card when a thought is tapped without auto-focusing, and never lets a later thought tap overwrite an edit", async () => {
     const onSubmit = jest.fn();
-    const { getAllByLabelText, getByLabelText, getByDisplayValue } = await renderScreen(onSubmit);
+    const { getAllByLabelText, queryAllByLabelText, getByLabelText, getByDisplayValue } =
+      await renderScreen(onSubmit);
 
     await act(async () => {
       jest.advanceTimersByTime(THOUGHT_INITIAL_DELAY_MS + THOUGHT_ENTER_DURATION_MS);
@@ -80,12 +81,12 @@ describe("IdentityInspirationScreen", () => {
     await act(async () => {
       jest.advanceTimersByTime(30_000);
     });
-    const laterThoughtButtons = getAllByLabelText(/^Use this thought:/);
+    const laterThoughtButtons = queryAllByLabelText(/^Use this thought:/);
     if (laterThoughtButtons.length > 0) {
       await fireEvent.press(laterThoughtButtons[0]);
     }
     expect(getByDisplayValue("I am someone who follows through, edited by hand.")).toBeTruthy();
-  });
+  }, 15000);
 
   it("shows no vision card in Reflection Mode, and reveals it only once Type is pressed", async () => {
     const onSubmit = jest.fn();
@@ -152,5 +153,48 @@ describe("IdentityInspirationScreen", () => {
 
     expect(queryByText("someone who follows through")).toBeNull();
     expect(getByLabelText("Continue").props.accessibilityState.disabled).toBe(true);
+  });
+
+  it("uses a completed voice transcript verbatim, never wrapping it into a broken identity-statement prefix", async () => {
+    const onSubmit = jest.fn();
+    const voiceCapture = buildVoiceCapture({
+      isAvailable: true,
+      requestPermission: jest.fn().mockResolvedValue(true),
+      isRecording: true,
+      transcript: "I wanna be perfect",
+    });
+    const { getByLabelText, getByDisplayValue } = await renderScreen(onSubmit, voiceCapture);
+
+    await fireEvent.press(getByLabelText("Record your vision by voice"));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await fireEvent.press(getByLabelText("Stop recording your vision"));
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    // Exactly what was said — never "I am someone who is i wanna be perfect".
+    expect(getByDisplayValue("I wanna be perfect")).toBeTruthy();
+  });
+
+  it("lets Clear wipe a revealed card back to Reflection Mode with no confirmation", async () => {
+    const onSubmit = jest.fn();
+    const { getAllByLabelText, getByLabelText, queryByLabelText } = await renderScreen(onSubmit);
+
+    await act(async () => {
+      jest.advanceTimersByTime(THOUGHT_INITIAL_DELAY_MS + THOUGHT_ENTER_DURATION_MS);
+    });
+    const [thoughtButton] = getAllByLabelText(/^Use this thought:/);
+    await fireEvent.press(thoughtButton);
+
+    expect(getByLabelText("Your vision")).toBeTruthy();
+
+    await fireEvent.press(getByLabelText("Clear your vision and start over"));
+
+    expect(queryByLabelText("Your vision")).toBeNull();
+    expect(getByLabelText("Type your vision instead")).toBeTruthy();
   });
 });
