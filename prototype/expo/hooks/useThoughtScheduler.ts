@@ -74,6 +74,18 @@ export function useThoughtScheduler({
   // Bumped every time the run loop is torn down (pause or unmount) so a
   // timer scheduled by a previous run can never fire into a new one.
   const generationRef = useRef(0);
+  // Tracks the thoughtSource this queue was actually drawn from — `queueRef`
+  // is a ref, so it survives this effect restarting on its own. On AE-001's
+  // Vision Canvas screen, `thoughtSource` swaps from the curated default to
+  // the real personalized pool once the backend call resolves, but the old
+  // pre-shuffled curated queue doesn't empty out just because the source
+  // changed underneath it — drawNextThought only refills when the queue is
+  // *empty* (line below), so the user kept seeing leftover generic curated
+  // bubbles, unrelated to what they typed, for as long as that queue took
+  // to drain (potentially the whole session). Detecting the swap here and
+  // clearing the stale queue makes the very next draw pull from the new
+  // source immediately.
+  const lastThoughtSourceRef = useRef(thoughtSource);
 
   const clearPending = useCallback(() => {
     if (timeoutRef.current) {
@@ -88,6 +100,11 @@ export function useThoughtScheduler({
       clearPending();
       setPhase("idle");
       return;
+    }
+
+    if (lastThoughtSourceRef.current !== thoughtSource) {
+      lastThoughtSourceRef.current = thoughtSource;
+      queueRef.current = [];
     }
 
     const generation = generationRef.current;

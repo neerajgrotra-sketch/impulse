@@ -138,6 +138,44 @@ describe("useThoughtScheduler", () => {
     expect(result.current.phase).toBe("visible");
   });
 
+  it("draws from a newly-swapped thoughtSource immediately, not after the old queue drains", async () => {
+    // Regression test for a real device bug: AE-001's Vision Canvas screen
+    // starts with the curated default source, then swaps to a personalized
+    // AI-generated source once the backend responds. Because the queue is a
+    // ref that only refills when empty, the swap alone didn't take effect —
+    // leftover curated thoughts kept surfacing (unrelated to what the user
+    // typed) until that whole pre-shuffled queue happened to drain.
+    const curatedSource = () => [
+      { id: "curated-1", text: "curated one", theme: "Personal Growth" as const },
+      { id: "curated-2", text: "curated two", theme: "Personal Growth" as const },
+    ];
+    const personalizedSource = () => [
+      { id: "personal-1", text: "about your actual answer", theme: "Health & Energy" as const },
+    ];
+
+    const { result, rerender } = await renderHook(
+      (props: { thoughtSource: () => ReturnType<typeof curatedSource> }) =>
+        useThoughtScheduler({ paused: false, thoughtSource: props.thoughtSource }),
+      { initialProps: { thoughtSource: curatedSource } }
+    );
+
+    // First thought comes from the curated source, as expected.
+    await act(async () => {
+      jest.advanceTimersByTime(THOUGHT_INITIAL_DELAY_MS);
+    });
+    expect(result.current.thought?.id.startsWith("curated-")).toBe(true);
+
+    // Swap sources mid-session (the queue still has one curated item left
+    // unpopped) — the very next draw should come from the new source, not
+    // from the stale curated leftover.
+    await rerender({ thoughtSource: personalizedSource });
+    await act(async () => {
+      jest.advanceTimersByTime(FULL_CYCLE_MS);
+    });
+
+    expect(result.current.thought?.id).toBe("personal-1");
+  });
+
   it("holds the first thought for an active screen reader, independent of Reduce Motion", async () => {
     const { result } = await renderHook(() =>
       useThoughtScheduler({ paused: false, reduceMotion: false, screenReaderEnabled: true })
