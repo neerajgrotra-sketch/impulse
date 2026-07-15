@@ -253,6 +253,10 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
           <Text style={styles.title} accessibilityRole="header">
             Tell Me More – What's in Your Mind
           </Text>
+          {/* TEMPORARY diagnostic — remove once the bubble no-show is root-caused. */}
+          <Text style={[typography.caption, { color: colors.state.danger }]} selectable>
+            {`DEBUG thoughts=${thoughtPool.length} canvas=${visionCanvas.length}/${MAX_VISION_FRAGMENTS} phase=${phase.status} paused=${String(paused)}`}
+          </Text>
           <BreathingOrb
             state={orbState}
             listening={speechAdapter.status === "listening"}

@@ -5,6 +5,7 @@ import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useVoiceCapture } from "@/hooks/useVoiceCapture";
 import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
 import { colors, spacing, typography } from "@/theme";
+import type { AdaptivePhase } from "@/types/adaptiveCoaching";
 import { DebugOverlay } from "./components/DebugOverlay";
 import { CoachingBeatScreen } from "./screens/CoachingBeatScreen";
 import { MomentOneScreen } from "./screens/MomentOneScreen";
@@ -32,7 +33,7 @@ export function AdaptiveCoachingCoordinator() {
   return (
     <View style={styles.container}>
       <Animated.View
-        key={phase.status}
+        key={screenKey(phase.status)}
         entering={reduceMotion ? undefined : FadeIn.duration(500)}
         exiting={reduceMotion ? undefined : FadeOut.duration(400)}
         style={styles.container}
@@ -42,6 +43,21 @@ export function AdaptiveCoachingCoordinator() {
       <DebugOverlay />
     </View>
   );
+
+  // "generating-inspiration" / "inspiration-vision" / "reviewing" are all one
+  // continuous VisionCanvasScreen instance (its own doc comment says so) —
+  // keying this wrapper by raw `phase.status` was remounting that screen
+  // from scratch on every one of those internal transitions (most visibly,
+  // every single thought-bubble tap, which moves reviewing -> a fresh mount),
+  // tearing down ThoughtStream's scheduler and its timers each time. Group
+  // them under one stable key so only a transition to a genuinely different
+  // screen re-triggers the enter/exit crossfade.
+  function screenKey(status: AdaptivePhase["status"]): string {
+    if (status === "generating-inspiration" || status === "inspiration-vision" || status === "reviewing") {
+      return "vision-canvas";
+    }
+    return status;
+  }
 
   function renderPhase() {
     switch (phase.status) {
