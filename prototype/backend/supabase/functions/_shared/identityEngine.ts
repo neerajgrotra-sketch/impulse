@@ -88,6 +88,32 @@ function lintInspirationResult(result: { thoughts: { text: string }[] }): string
   return null;
 }
 
+// Structured-output JSON Schema can't express minItems/maxItems beyond 0/1
+// (see INSPIRATION_SCHEMA's own comment), so layer1Task's "rank ALL 15
+// dimensions, generate ~50 thoughts" is prompt text only — nothing stops the
+// model from returning a technically-valid, near-empty response. Found on a
+// real device: a terse/joking becoming_response ("I wanna be the very best")
+// got back only 2 ranked dimensions and zero thoughts, which passed
+// lintInspirationResult trivially (no thoughts means no thought can violate
+// anything) and shipped as a 200 with nothing for Vision Canvas to show —
+// silently, no error anywhere. This is the completeness half of that same
+// quality bar, checked in code since the schema can't check it.
+export const MIN_THOUGHTS = 20;
+
+export function findCompletenessViolation(result: {
+  ranked_dimensions: { dimension: string }[];
+  thoughts: { text: string }[];
+}): string | null {
+  const rankedCount = new Set(result.ranked_dimensions.map((d) => d.dimension)).size;
+  if (rankedCount < LIFE_DIMENSIONS.length) {
+    return `only ranked ${rankedCount} of the ${LIFE_DIMENSIONS.length} required Life Dimensions — every one must get a score`;
+  }
+  if (result.thoughts.length < MIN_THOUGHTS) {
+    return `only generated ${result.thoughts.length} thoughts — at least ${MIN_THOUGHTS} are required, however short or plain the person's own answer was`;
+  }
+  return null;
+}
+
 async function callModel(userMessage: string, system: string, retryNote?: string) {
   return await anthropic.messages.create({
     model: MODEL.dialogue,
@@ -139,7 +165,7 @@ export async function rankDimensionsAndGenerateThoughts(
     throw new IdentityEngineError("model output was not valid JSON");
   }
 
-  let violation = lintInspirationResult(parsed);
+  let violation = lintInspirationResult(parsed) ?? findCompletenessViolation(parsed);
   if (violation) {
     // One deterministic retry, naming the exact violation — same pattern
     // generate-blueprint already uses for its own tone lint.
@@ -147,19 +173,19 @@ export async function rankDimensionsAndGenerateThoughts(
       const retryResponse = await callModel(
         userMessage,
         system,
-        `Your previous draft violated a rule: ${violation}. Regenerate every thought so none violate that rule, and re-check each one before responding.`,
+        `Your previous draft violated a rule: ${violation}. Regenerate the full response so it satisfies every rule — including ranking all ${LIFE_DIMENSIONS.length} Life Dimensions and generating at least ${MIN_THOUGHTS} thoughts — and re-check it before responding.`,
       );
       const retryText = extractJSONText(retryResponse.content);
       if (retryText) {
         parsed = JSON.parse(retryText);
-        violation = lintInspirationResult(parsed);
+        violation = lintInspirationResult(parsed) ?? findCompletenessViolation(parsed);
       }
     } catch {
       // fall through — the violation check below still fires and fails closed
     }
   }
   if (violation) {
-    throw new IdentityEngineError(`inspiration content failed content-quality lint twice: ${violation}`);
+    throw new IdentityEngineError(`inspiration content failed the content/completeness lint twice: ${violation}`);
   }
 
   const rankedDimensions: RankedDimension[] = parsed.ranked_dimensions
