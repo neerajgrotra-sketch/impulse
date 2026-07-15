@@ -19,6 +19,13 @@ type BreathingOrbProps = {
    *  one-shot micro-pulse without disturbing the base breathing loop. Only
    *  meaningful (and only sent by the parent) while Reduce Motion is off. */
   thoughtPulseSignal?: number;
+  /** True once a backend/LLM call this screen depends on has succeeded —
+   *  unlike `finished`/`error`, this is a held state, not a one-shot: the
+   *  orb slowly settles into a light green tint and stays there for as long
+   *  as `connected` stays true. Never animates toward "connected" on its
+   *  own — a caller that never sets this true (no LLM call, or one still in
+   *  flight) simply leaves the orb at its current color. */
+  connected?: boolean;
   /** True the moment Reduce Motion is on, so the one-shot Finished/Error
    *  effects skip their animated build-up and land on their held value
    *  immediately instead of easing there. */
@@ -40,6 +47,7 @@ export function BreathingOrb({
   state,
   listening,
   thoughtPulseSignal,
+  connected = false,
   reduceMotion = false,
   size = 140,
 }: BreathingOrbProps) {
@@ -52,6 +60,7 @@ export function BreathingOrb({
   const finishedPulse = useSharedValue(0);
   const thoughtPulse = useSharedValue(0);
   const errorTint = useSharedValue(0);
+  const successTint = useSharedValue(0);
   const processing = state === "processing" && !listening;
   const typing = state === "typing" && !listening;
   const finished = state === "finished" && !listening;
@@ -124,6 +133,22 @@ export function BreathingOrb({
     );
   }, [isError, reduceMotion, errorTint]);
 
+  // Connected: a slow, held settle into green — not a pulse — so it reads as
+  // a status, not an event. Fades back out just as gently if `connected`
+  // ever goes false again (e.g. the screen resets). Reduce Motion still
+  // needs the color information, so it jumps straight to the target value
+  // instead of being suppressed like the one-shot Finished/Error effects.
+  useEffect(() => {
+    if (reduceMotion) {
+      successTint.value = connected ? 1 : 0;
+      return;
+    }
+    successTint.value = withTiming(connected ? 1 : 0, {
+      duration: connected ? 1800 : 400,
+      easing: Easing.out(Easing.ease),
+    });
+  }, [connected, reduceMotion, successTint]);
+
   const rippleStyle = useAnimatedStyle(() => {
     if (processing) {
       return {
@@ -145,6 +170,10 @@ export function BreathingOrb({
     opacity: errorTint.value * 0.18,
   }));
 
+  const successTintStyle = useAnimatedStyle(() => ({
+    opacity: successTint.value * 0.22,
+  }));
+
   return (
     <View style={styles.wrap} accessible={false}>
       <Animated.View
@@ -160,6 +189,14 @@ export function BreathingOrb({
           styles.errorTint,
           { width: size, height: size, borderRadius: size / 2 },
           errorTintStyle,
+        ]}
+      />
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.successTint,
+          { width: size, height: size, borderRadius: size / 2 },
+          successTintStyle,
         ]}
       />
       {listening && <Text style={[typography.caption, styles.label]}>Listening…</Text>}
@@ -180,6 +217,10 @@ const styles = StyleSheet.create({
   errorTint: {
     position: "absolute",
     backgroundColor: colors.state.danger,
+  },
+  successTint: {
+    position: "absolute",
+    backgroundColor: colors.state.success,
   },
   label: {
     marginTop: spacing.sm,

@@ -37,6 +37,9 @@ export const colors = {
 
   state: {
     danger: "#E2A0A0",
+    /** Soft, desaturated green — same treatment as `danger`, used only as a
+     *  brief connection-succeeded tint (never a persistent status chip). */
+    success: "#A3D9B1",
   },
 } as const;
 

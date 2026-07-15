@@ -257,6 +257,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
             state={orbState}
             listening={speechAdapter.status === "listening"}
             thoughtPulseSignal={thoughtPulseSignal}
+            connected={!isGenerating}
             reduceMotion={reduceMotion}
           />
           {isGenerating && (
