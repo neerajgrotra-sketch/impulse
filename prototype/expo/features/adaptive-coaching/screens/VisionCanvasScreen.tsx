@@ -57,6 +57,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [thoughtPulseSignal, setThoughtPulseSignal] = useState(0);
+  const [showLongWaitMessage, setShowLongWaitMessage] = useState(false);
   const selectedCountRef = useRef(0);
   const editedCountRef = useRef(0);
   const deletedCountRef = useRef(0);
@@ -108,6 +109,21 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
     })();
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase.status]);
+
+  // The inspiration call routinely takes 30-50s (identityEngine.ts can retry
+  // the model up to 3 times when it under-generates) — long enough that the
+  // static "Getting to know what matters to you…" status alone starts to
+  // read as stuck. This adds a second, later reassurance rather than
+  // replacing the first, so the screen keeps telling the truth about how
+  // long it's actually been waiting instead of guessing a fake ETA.
+  useEffect(() => {
+    if (phase.status !== "generating-inspiration") {
+      setShowLongWaitMessage(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowLongWaitMessage(true), 15_000);
+    return () => clearTimeout(timer);
   }, [phase.status]);
 
   // Excludes anything already sitting in the Vision Canvas — otherwise the
@@ -263,6 +279,14 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
           {isGenerating && (
             <Animated.Text entering={reduceMotion ? undefined : FadeIn.duration(400)} style={[typography.bodySecondary, styles.statusText]}>
               Getting to know what matters to you…
+            </Animated.Text>
+          )}
+          {isGenerating && showLongWaitMessage && (
+            <Animated.Text
+              entering={reduceMotion ? undefined : FadeIn.duration(400)}
+              style={[typography.caption, styles.statusText]}
+            >
+              Good answers take a little longer — still working…
             </Animated.Text>
           )}
         </View>

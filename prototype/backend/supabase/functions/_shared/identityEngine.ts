@@ -134,6 +134,16 @@ export interface RankAndGenerateInput {
   becomingResponse: string;
 }
 
+// A single corrective retry (MAX_ATTEMPTS = 2) turned out not to be enough:
+// hammering the live model with casual/terse becoming_response text (the
+// realistic case this guardrail exists for) still under-generated on the
+// second attempt roughly as often as the first — a genuinely playful/short
+// answer seems to make the model commit to a "light" response and a single
+// correction doesn't reliably break that. Bounded at 3 total attempts rather
+// than looping unbounded, since this still must fail closed eventually
+// rather than run forever on a persistently uncooperative response.
+const MAX_ATTEMPTS = 3;
+
 export async function rankDimensionsAndGenerateThoughts(
   input: RankAndGenerateInput,
 ): Promise<InspirationResult> {
@@ -143,50 +153,61 @@ export async function rankDimensionsAndGenerateThoughts(
     dimensionEnumValues: LIFE_DIMENSIONS,
   });
 
-  let response;
-  try {
-    response = await callModel(userMessage, system);
-  } catch (err) {
-    throw new IdentityEngineError(
-      `inspiration generation failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  if (response.stop_reason === "refusal") {
-    throw new IdentityEngineError("model declined to generate inspiration content");
-  }
+  let parsed: { ranked_dimensions: { dimension: string; relevance: number }[]; thoughts: { dimension: string; text: string }[] } | null = null;
+  let violation: string | null = null;
 
-  const rawText = extractJSONText(response.content);
-  if (!rawText) throw new IdentityEngineError("no text content returned");
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const retryNote =
+      violation === null
+        ? undefined
+        : `Your previous draft violated a rule: ${violation}. Regenerate the full response so it satisfies every rule — including ranking all ${LIFE_DIMENSIONS.length} Life Dimensions and generating at least ${MIN_THOUGHTS} thoughts — and re-check it before responding.`;
 
-  let parsed: { ranked_dimensions: { dimension: string; relevance: number }[]; thoughts: { dimension: string; text: string }[] };
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    throw new IdentityEngineError("model output was not valid JSON");
-  }
-
-  let violation = lintInspirationResult(parsed) ?? findCompletenessViolation(parsed);
-  if (violation) {
-    // One deterministic retry, naming the exact violation — same pattern
-    // generate-blueprint already uses for its own tone lint.
+    let response;
     try {
-      const retryResponse = await callModel(
-        userMessage,
-        system,
-        `Your previous draft violated a rule: ${violation}. Regenerate the full response so it satisfies every rule — including ranking all ${LIFE_DIMENSIONS.length} Life Dimensions and generating at least ${MIN_THOUGHTS} thoughts — and re-check it before responding.`,
-      );
-      const retryText = extractJSONText(retryResponse.content);
-      if (retryText) {
-        parsed = JSON.parse(retryText);
-        violation = lintInspirationResult(parsed) ?? findCompletenessViolation(parsed);
+      response = await callModel(userMessage, system, retryNote);
+    } catch (err) {
+      if (attempt === MAX_ATTEMPTS) {
+        throw new IdentityEngineError(
+          `inspiration generation failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
+      continue;
+    }
+    if (response.stop_reason === "refusal") {
+      if (attempt === MAX_ATTEMPTS) {
+        throw new IdentityEngineError("model declined to generate inspiration content");
+      }
+      continue;
+    }
+
+    const rawText = extractJSONText(response.content);
+    if (!rawText) {
+      if (attempt === MAX_ATTEMPTS) throw new IdentityEngineError("no text content returned");
+      continue;
+    }
+
+    let attemptParsed: { ranked_dimensions: { dimension: string; relevance: number }[]; thoughts: { dimension: string; text: string }[] };
+    try {
+      attemptParsed = JSON.parse(rawText);
     } catch {
-      // fall through — the violation check below still fires and fails closed
+      if (attempt === MAX_ATTEMPTS) throw new IdentityEngineError("model output was not valid JSON");
+      continue;
+    }
+
+    violation = lintInspirationResult(attemptParsed) ?? findCompletenessViolation(attemptParsed);
+    if (!violation) {
+      parsed = attemptParsed;
+      break;
+    }
+    if (attempt === MAX_ATTEMPTS) {
+      throw new IdentityEngineError(`inspiration content failed the content/completeness lint after ${MAX_ATTEMPTS} attempts: ${violation}`);
     }
   }
-  if (violation) {
-    throw new IdentityEngineError(`inspiration content failed the content/completeness lint twice: ${violation}`);
-  }
+
+  // Unreachable in practice — the loop above always either returns a clean
+  // `parsed` or throws on its final attempt — but satisfies the type checker
+  // without an `as` cast.
+  if (!parsed) throw new IdentityEngineError("inspiration generation produced no result");
 
   const rankedDimensions: RankedDimension[] = parsed.ranked_dimensions
     .filter((d): d is { dimension: LifeDimension; relevance: number } => isLifeDimension(d.dimension))

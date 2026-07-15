@@ -25,7 +25,13 @@ import type {
  * field on the response.
  */
 
-const REQUEST_TIMEOUT_MS = 30_000;
+// Generous on purpose: inspiration_generation can internally retry the model
+// up to 3 times (identityEngine.ts's own MAX_ATTEMPTS) when the response
+// under-generates, plus the Safety Engine's own pre-call classification —
+// and a single one of those model calls alone has been observed taking
+// 30-40s. A 30s client timeout was found aborting (and discarding) requests
+// that the server went on to complete successfully seconds later.
+const REQUEST_TIMEOUT_MS = 120_000;
 
 export type OnboardingTurnApiErrorKind = "config" | "network" | "timeout" | "aborted" | "server" | "invalid-response";
 
