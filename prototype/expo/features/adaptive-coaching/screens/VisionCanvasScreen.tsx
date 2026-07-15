@@ -140,7 +140,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   // a thought appears) was tearing the scheduler down and restarting it from
   // scratch before a thought ever got the chance to hold visible or be
   // tapped.
-  const thoughtSource = useCallback((): Thought[] => {
+  const aiThoughtSource = useCallback((): Thought[] => {
     const selectedTexts = new Set(visionCanvas.map((f) => f.text));
     const shuffled = thoughtPool.filter((t) => !selectedTexts.has(t.text));
     for (let i = shuffled.length - 1; i > 0; i -= 1) {
@@ -150,8 +150,16 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
     return shuffled.map((t) => ({ id: t.id, text: t.text, theme: t.dimension }));
   }, [thoughtPool, visionCanvas]);
 
+  // While the AI pool is still empty (generating, or a request that hasn't
+  // landed yet), `thoughtSource` is left `undefined` — ThoughtStream/
+  // useThoughtScheduler's own default then falls back to the curated static
+  // library, so the stream has something to show the instant this screen
+  // mounts instead of sitting blank for the ~15-45s the AI call can take.
+  // Once thoughtPool actually has entries, this switches over to the real,
+  // personalized source.
+  const thoughtSource = thoughtPool.length > 0 ? aiThoughtSource : undefined;
+
   const paused =
-    phase.status === "generating-inspiration" ||
     speechAdapter.status === "listening" ||
     speechAdapter.status === "processing" ||
     visionCanvas.length >= MAX_VISION_FRAGMENTS;
@@ -291,59 +299,55 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
           )}
         </View>
 
-        {!isGenerating && (
-          <>
-            <ThoughtStream
-              paused={paused}
-              reduceMotion={reduceMotion}
-              screenReaderEnabled={screenReaderEnabled}
-              onSelectThought={handleSelectThought}
-              onThoughtAppear={handleThoughtAppear}
-              thoughtSource={thoughtSource}
-              height={96}
-            />
+        <ThoughtStream
+          paused={paused}
+          reduceMotion={reduceMotion}
+          screenReaderEnabled={screenReaderEnabled}
+          onSelectThought={handleSelectThought}
+          onThoughtAppear={handleThoughtAppear}
+          thoughtSource={thoughtSource}
+          height={96}
+        />
 
-            <ScrollView
-              style={styles.canvasScroll}
-              contentContainerStyle={{ paddingBottom: keyboardHeight }}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-              showsVerticalScrollIndicator={false}
-            >
-              <VisionCanvas
-                fragments={visionCanvas}
-                maxFragments={MAX_VISION_FRAGMENTS}
-                onEditFragment={handleEditFragment}
-                onRemoveFragment={handleRemoveFragment}
-                onReorderFragment={reorderVisionFragments}
-                reduceMotion={reduceMotion}
-              />
-            </ScrollView>
+        <ScrollView
+          style={styles.canvasScroll}
+          contentContainerStyle={{ paddingBottom: keyboardHeight }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+        >
+          <VisionCanvas
+            fragments={visionCanvas}
+            maxFragments={MAX_VISION_FRAGMENTS}
+            onEditFragment={handleEditFragment}
+            onRemoveFragment={handleRemoveFragment}
+            onReorderFragment={reorderVisionFragments}
+            reduceMotion={reduceMotion}
+          />
+        </ScrollView>
 
-            <View style={styles.actionsRow}>
-              <VoiceCaptureButton adapter={speechAdapter} />
-              <Pressable
-                onPress={handleTypeAdd}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Type another fragment"
-                disabled={visionCanvas.length >= MAX_VISION_FRAGMENTS}
-              >
-                <Text style={[typography.bodySecondary, styles.typeLabel]}>+ Type</Text>
-              </Pressable>
-            </View>
+        <View style={styles.actionsRow}>
+          <VoiceCaptureButton adapter={speechAdapter} />
+          <Pressable
+            onPress={handleTypeAdd}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Type another fragment"
+            disabled={visionCanvas.length >= MAX_VISION_FRAGMENTS}
+          >
+            <Text style={[typography.bodySecondary, styles.typeLabel]}>+ Type</Text>
+          </Pressable>
+        </View>
 
-            {errorMessage && <Text style={[typography.caption, styles.errorText]}>{errorMessage}</Text>}
+        {errorMessage && <Text style={[typography.caption, styles.errorText]}>{errorMessage}</Text>}
 
-            <PrimaryButton
-              label="Continue"
-              onPress={handleContinue}
-              fullWidth
-              loading={isSubmitting}
-              disabled={visionCanvas.length === 0 || isSubmitting}
-            />
-          </>
-        )}
+        <PrimaryButton
+          label="Continue"
+          onPress={handleContinue}
+          fullWidth
+          loading={isSubmitting}
+          disabled={visionCanvas.length === 0 || isSubmitting || isGenerating}
+        />
       </Pressable>
     </View>
   );

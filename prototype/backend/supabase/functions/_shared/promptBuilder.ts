@@ -37,7 +37,7 @@ export interface InspirationPromptInput {
  *  user's own Curiosity answer, not a Decision Engine frame (this is an
  *  onboarding surface, not an ordinary Impulse Moment turn). */
 export function assembleInspirationPrompt(input: InspirationPromptInput): AssembledPrompt {
-  const layer1Task = `Your task: given what this person just said in answer to "Who are you becoming?", rank ALL of the following canonical Life Dimensions by relevance to them (every dimension gets a score, none are omitted), then generate approximately 50 short thought fragments (6-12 words each, emotionally neutral, inspiring, never prescriptive or diagnostic) drawn mostly from the highest-ranked dimensions. Life Dimensions are canonical, fixed, and NEVER goals/tasks/habits — they are the semantic layer you use to understand this person's life, not content to show them directly.
+  const layer1Task = `Your task: given what this person just said in answer to "Who are you becoming?", rank ALL of the following canonical Life Dimensions by relevance to them (every dimension gets a score, none are omitted), then generate approximately 20 short thought fragments (6-12 words each, emotionally neutral, inspiring, never prescriptive or diagnostic) drawn mostly from the highest-ranked dimensions. Life Dimensions are canonical, fixed, and NEVER goals/tasks/habits — they are the semantic layer you use to understand this person's life, not content to show them directly.
 
 Canonical Life Dimensions (rank every one): ${input.dimensionEnumValues.join(", ")}.
 

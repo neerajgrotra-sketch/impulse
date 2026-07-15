@@ -27,7 +27,7 @@ export interface InspirationResult {
 export class IdentityEngineError extends Error {}
 
 // Structured-output JSON Schema only supports minItems/maxItems of 0 or 1 —
-// arbitrary bounds (15 dimensions, 40-55 thoughts) are enforced by the
+// arbitrary bounds (15 dimensions, ~20 thoughts) are enforced by the
 // prompt instructions instead (assembleInspirationPrompt's layer1Task) and
 // checked in code below (lintInspirationResult / the dimension-count check),
 // not by the schema.
@@ -90,15 +90,18 @@ function lintInspirationResult(result: { thoughts: { text: string }[] }): string
 
 // Structured-output JSON Schema can't express minItems/maxItems beyond 0/1
 // (see INSPIRATION_SCHEMA's own comment), so layer1Task's "rank ALL 15
-// dimensions, generate ~50 thoughts" is prompt text only — nothing stops the
+// dimensions, generate ~20 thoughts" is prompt text only — nothing stops the
 // model from returning a technically-valid, near-empty response. Found on a
 // real device: a terse/joking becoming_response ("I wanna be the very best")
 // got back only 2 ranked dimensions and zero thoughts, which passed
 // lintInspirationResult trivially (no thoughts means no thought can violate
 // anything) and shipped as a 200 with nothing for Vision Canvas to show —
 // silently, no error anywhere. This is the completeness half of that same
-// quality bar, checked in code since the schema can't check it.
-export const MIN_THOUGHTS = 20;
+// quality bar, checked in code since the schema can't check it. Set well
+// below the ~20 target (not requiring the model hit its target exactly) —
+// still comfortably more than ThoughtStream needs to sustain a full session,
+// since it only ever shows one bubble at a time.
+export const MIN_THOUGHTS = 12;
 
 export function findCompletenessViolation(result: {
   ranked_dimensions: { dimension: string }[];
