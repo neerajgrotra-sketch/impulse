@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import Animated, { LinearTransition } from "react-native-reanimated";
+import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BreathingOrb, EditableVisionCard, GradientBackground, PrimaryButton, VoiceCaptureButton } from "@/components";
 import type { VoiceOrbState } from "@/components";
@@ -45,6 +45,7 @@ export function MomentOneScreen({ voiceCapture, onSubmit }: MomentOneScreenProps
   const speechAdapter = useSpeechRecognitionAdapter(voiceCapture);
 
   const [visionText, setVisionText] = useState("");
+  const [displayTranscript, setDisplayTranscript] = useState("");
   const [cardRevealed, setCardRevealed] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [firstInteractionLogged, setFirstInteractionLogged] = useState(false);
@@ -63,6 +64,20 @@ export function MomentOneScreen({ voiceCapture, onSubmit }: MomentOneScreenProps
       hideSub.remove();
     };
   }, []);
+
+  // The live transcript overlay's content: mirrors partial speech while
+  // listening, then holds (doesn't clear) through processing so the settle
+  // into the vision card has real words to land on; clears once truly idle.
+  // Deliberately separate from `visionText`/`cardRevealed` — the choice
+  // panel (with the mic button and its Cancel link) stays on screen for the
+  // whole recording, same as before; only the overlay is new.
+  useEffect(() => {
+    if (speechAdapter.status === "listening") {
+      setDisplayTranscript(speechAdapter.partialTranscript);
+    } else if (speechAdapter.status === "idle") {
+      setDisplayTranscript("");
+    }
+  }, [speechAdapter.status, speechAdapter.partialTranscript]);
 
   useEffect(() => {
     if (speechAdapter.status !== "completed") return;
@@ -115,6 +130,9 @@ export function MomentOneScreen({ voiceCapture, onSubmit }: MomentOneScreenProps
             : "idle";
 
   const canContinue = visionText.trim().length > 0;
+  const showTranscriptOverlay =
+    (speechAdapter.status === "listening" || speechAdapter.status === "processing") &&
+    displayTranscript.trim().length > 0;
 
   return (
     <View style={styles.container}>
@@ -193,6 +211,18 @@ export function MomentOneScreen({ voiceCapture, onSubmit }: MomentOneScreenProps
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {showTranscriptOverlay && (
+        <View pointerEvents="none" style={styles.transcriptOverlay}>
+          <Animated.Text
+            entering={reduceMotion ? undefined : FadeIn.duration(200)}
+            style={[typography.display, styles.transcriptText]}
+            numberOfLines={6}
+          >
+            {displayTranscript}
+          </Animated.Text>
+        </View>
+      )}
+
       {Platform.OS === "ios" && (
         <InputAccessoryView nativeID={VISION_INPUT_ACCESSORY_ID}>
           <View style={styles.accessoryBar}>
@@ -222,6 +252,19 @@ const styles = StyleSheet.create({
   },
   bottomSlot: { width: "100%", alignItems: "center", gap: spacing.md },
   cardWrap: { width: "100%" },
+  transcriptOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+  },
+  transcriptText: {
+    textAlign: "center",
+  },
   choicePanel: {
     width: "100%",
     borderWidth: 1,

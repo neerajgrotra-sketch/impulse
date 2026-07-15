@@ -50,7 +50,13 @@
       "Bash(git -C /workspaces/impulse log --oneline -5)",
       "Bash(git -C /workspaces/impulse add decisions/0009-identity-onboarding-premium-redesign.md docs/identity-onboarding-choreography.md prototype/expo/components/BreathingOrb.tsx prototype/expo/components/ThoughtBubble.tsx prototype/expo/components/ThoughtStream.tsx prototype/expo/components/VoiceCaptureButton.tsx prototype/expo/components/VoiceOrb.tsx prototype/expo/features/onboarding/screens/IdentityInspirationScreen.tsx prototype/expo/features/onboarding/screens/__tests__/IdentityInspirationScreen.test.tsx)",
       "Bash(git -C /workspaces/impulse commit -m ' *)",
-      "Bash(git -C /workspaces/impulse log --oneline -3)"
+      "Bash(git -C /workspaces/impulse log --oneline -3)",
+      "Bash(curl -sS -o /dev/null -w \"localhost:8081 -> %{http_code}\\\\n\" --max-time 5 \"http://localhost:8081/_expo/loading?platform=ios\")",
+      "Bash(xargs ls)",
+      "Bash(curl -fsSL https://deno.land/install.sh)",
+      "Bash(sh -s -- -y)",
+      "Bash(/home/codespace/.deno/bin/deno test *)",
+      "Bash(echo \"EXIT:$?\")"
     ],
     "additionalDirectories": [
       "/tmp"

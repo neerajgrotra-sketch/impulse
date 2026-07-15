@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import Animated, { FadeIn } from "react-native-reanimated";
@@ -117,7 +117,14 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   // a second, duplicate fragment (handleSelectThought had no dedupe either —
   // fixed there too, as a second line of defense against a thought that was
   // already mid-queue when it got selected).
-  const thoughtSource = (): Thought[] => {
+  // Memoized so this keeps a stable identity across renders unrelated to
+  // thoughtPool/visionCanvas — useThoughtScheduler's effect depends on this
+  // function by reference, so a fresh one on every render (e.g. from
+  // handleThoughtAppear's own setThoughtPulseSignal, which fires every time
+  // a thought appears) was tearing the scheduler down and restarting it from
+  // scratch before a thought ever got the chance to hold visible or be
+  // tapped.
+  const thoughtSource = useCallback((): Thought[] => {
     const selectedTexts = new Set(visionCanvas.map((f) => f.text));
     const shuffled = thoughtPool.filter((t) => !selectedTexts.has(t.text));
     for (let i = shuffled.length - 1; i > 0; i -= 1) {
@@ -125,7 +132,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     return shuffled.map((t) => ({ id: t.id, text: t.text, theme: t.dimension }));
-  };
+  }, [thoughtPool, visionCanvas]);
 
   const paused =
     phase.status === "generating-inspiration" ||

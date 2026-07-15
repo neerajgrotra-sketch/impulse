@@ -1,5 +1,5 @@
-import { OnboardingCoordinator } from "@/features/onboarding/OnboardingCoordinator";
+import { AdaptiveCoachingCoordinator } from "@/features/adaptive-coaching/AdaptiveCoachingCoordinator";
 
 export default function Index() {
-  return <OnboardingCoordinator />;
+  return <AdaptiveCoachingCoordinator />;
 }
