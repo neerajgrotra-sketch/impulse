@@ -53,6 +53,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   const beatHardStopped = useAdaptiveCoachingStore((s) => s.beatHardStopped);
   const beatFailed = useAdaptiveCoachingStore((s) => s.beatFailed);
   const goBackToMomentOne = useAdaptiveCoachingStore((s) => s.goBackToMomentOne);
+  const debug = useAdaptiveCoachingStore((s) => s.debug);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -254,8 +255,11 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
             Tell Me More – What's in Your Mind
           </Text>
           {/* TEMPORARY diagnostic — remove once the bubble no-show is root-caused. */}
-          <Text style={[typography.caption, { color: colors.state.danger }]} selectable>
-            {`DEBUG thoughts=${thoughtPool.length} canvas=${visionCanvas.length}/${MAX_VISION_FRAGMENTS} phase=${phase.status} paused=${String(paused)}`}
+          <Text style={[typography.caption, { color: colors.state.danger }]} selectable numberOfLines={20}>
+            {`DEBUG thoughts=${thoughtPool.length} canvas=${visionCanvas.length}/${MAX_VISION_FRAGMENTS} phase=${phase.status} paused=${String(paused)}\n` +
+              `becomingResponse="${becomingResponse}"\n` +
+              `rankedDimensions=${rankedDimensions.length} safetyTier=${debug.lastSafetyTier} latencyMs=${debug.lastLatencyMs}\n` +
+              `rawPayload=${JSON.stringify(debug.lastRawPayload)}`}
           </Text>
           <BreathingOrb
             state={orbState}
