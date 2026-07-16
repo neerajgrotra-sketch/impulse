@@ -25,8 +25,11 @@ import { MODEL } from "../_shared/anthropicClient.ts";
 import {
   chooseOnboardingBeat as realChooseOnboardingBeat,
   CoachEngineError,
+  synthesizeUnderstanding as realSynthesizeUnderstanding,
   type ChooseBeatInput,
   type OnboardingBeatResult,
+  type SynthesizeUnderstandingInput,
+  type UnderstandingReview,
 } from "../_shared/coachEngine.ts";
 import {
   generateInspiration as realGenerateInspiration,
@@ -59,7 +62,16 @@ interface OnboardingBeatRequest {
   vision_canvas: { text: string }[];
 }
 
-type OnboardingTurnRequest = InspirationRequest | OnboardingBeatRequest;
+interface FinalSynthesisRequest {
+  turn_type: "final_synthesis";
+  first_name?: string;
+  becoming_response: string;
+  vision_canvas: { text: string; source: "ai" | "fallback" | "user"; edited: boolean }[];
+  dismissed_thoughts?: { text: string; source: "ai" | "fallback" | "user" }[];
+  correction_note?: string;
+}
+
+type OnboardingTurnRequest = InspirationRequest | OnboardingBeatRequest | FinalSynthesisRequest;
 
 /** Every external effect this handler needs, injectable for tests — the
  *  golden/red-team eval set exercises the real routing/safety/validation
@@ -69,12 +81,14 @@ export interface OnboardingTurnDeps {
   classifyRisk: (text: string) => Promise<SafetyClassification>;
   generateInspiration: (input: GenerateInspirationInput) => Promise<InspirationResult>;
   chooseOnboardingBeat: (input: ChooseBeatInput) => Promise<OnboardingBeatResult>;
+  synthesizeUnderstanding: (input: SynthesizeUnderstandingInput) => Promise<UnderstandingReview>;
 }
 
 const defaultDeps: OnboardingTurnDeps = {
   classifyRisk: realClassifyRisk,
   generateInspiration: realGenerateInspiration,
   chooseOnboardingBeat: realChooseOnboardingBeat,
+  synthesizeUnderstanding: realSynthesizeUnderstanding,
 };
 
 function jsonError(message: string, status: number, requestId?: string): Response {
@@ -113,6 +127,29 @@ function isValidOnboardingBeatRequest(body: unknown): body is OnboardingBeatRequ
   if (!Array.isArray(b.vision_canvas) || b.vision_canvas.length === 0) return false;
   if (!b.vision_canvas.every((f) => typeof (f as { text?: unknown }).text === "string")) return false;
   if (!Array.isArray(b.ranked_dimensions)) return false;
+  return true;
+}
+
+function isValidFinalSynthesisRequest(body: unknown): body is FinalSynthesisRequest {
+  if (typeof body !== "object" || body === null) return false;
+  const b = body as Record<string, unknown>;
+  if (b.turn_type !== "final_synthesis") return false;
+  if (typeof b.becoming_response !== "string") return false;
+  if (!Array.isArray(b.vision_canvas) || b.vision_canvas.length === 0) return false;
+  if (
+    !b.vision_canvas.every(
+      (f) =>
+        typeof (f as { text?: unknown }).text === "string" &&
+        typeof (f as { source?: unknown }).source === "string" &&
+        typeof (f as { edited?: unknown }).edited === "boolean",
+    )
+  ) {
+    return false;
+  }
+  if (b.dismissed_thoughts !== undefined) {
+    if (!Array.isArray(b.dismissed_thoughts)) return false;
+    if (!b.dismissed_thoughts.every((t) => typeof (t as { text?: unknown }).text === "string")) return false;
+  }
   return true;
 }
 
@@ -277,6 +314,85 @@ async function handleOnboardingBeat(
   });
 }
 
+async function handleFinalSynthesis(
+  payload: FinalSynthesisRequest,
+  deps: OnboardingTurnDeps,
+  requestId: string,
+): Promise<Response> {
+  if (!isValidFinalSynthesisRequest(payload)) {
+    return jsonError("vision_canvas is required and must be non-empty", 400, requestId);
+  }
+
+  // Safety Engine runs first, unconditionally, on every inbound turn — same
+  // rule handleOnboardingBeat already applies, extended to this turn's own
+  // user-authored content (selected + dismissed fragments).
+  const textToScreen = [
+    ...payload.vision_canvas.map((f) => f.text),
+    ...(payload.dismissed_thoughts ?? []).map((t) => t.text),
+  ].join("\n");
+
+  let safety: SafetyClassification;
+  try {
+    safety = await deps.classifyRisk(textToScreen);
+  } catch (err) {
+    if (err instanceof SafetyClassificationError) {
+      return jsonError("safety_check_failed: please try again", 503, requestId);
+    }
+    return jsonError("unexpected error during safety screening", 502, requestId);
+  }
+
+  const action = mapTierToAction(safety.tier);
+  if (action.hardStop) {
+    return jsonOk(hardStopBody(safety.tier as "elevated" | "crisis", requestId));
+  }
+
+  const start = Date.now();
+  let result: UnderstandingReview;
+  try {
+    result = await deps.synthesizeUnderstanding({
+      firstName: payload.first_name ?? "",
+      becomingResponse: payload.becoming_response,
+      visionCanvas: payload.vision_canvas,
+      dismissedThoughts: payload.dismissed_thoughts,
+      correctionNote: payload.correction_note,
+    });
+  } catch (err) {
+    if (err instanceof CoachEngineError) return jsonError(err.message, 502, requestId);
+    return jsonError("unexpected error while synthesizing the understanding review", 502, requestId);
+  }
+
+  // Outbound re-check on every generated prose field before ever returning
+  // them — never render an unscreened outbound turn.
+  let outboundSafety: SafetyClassification;
+  try {
+    outboundSafety = await deps.classifyRisk(
+      [result.headline, result.coreAspiration, result.interpretation, result.identityStatement].join("\n"),
+    );
+  } catch {
+    return jsonError("safety_check_failed: please try again", 503, requestId);
+  }
+  const outboundAction = mapTierToAction(outboundSafety.tier);
+  if (outboundAction.hardStop) {
+    return jsonOk(hardStopBody(outboundSafety.tier as "elevated" | "crisis", requestId));
+  }
+
+  return jsonOk({
+    safety: { tier: safety.tier, hard_stop: false },
+    understanding: {
+      headline: result.headline,
+      core_aspiration: result.coreAspiration,
+      interpretation: result.interpretation,
+      identity_statement: result.identityStatement,
+      emerging_themes: result.emergingThemes,
+      uncertainties: result.uncertainties,
+      confidence: result.confidence,
+    },
+    request_id: requestId,
+    prompt_version: "final-synthesis-v1",
+    latency_ms: Date.now() - start,
+  });
+}
+
 export async function handleOnboardingTurn(req: Request, deps: OnboardingTurnDeps = defaultDeps): Promise<Response> {
   if (req.method !== "POST") {
     return jsonError("POST only", 405);
@@ -305,6 +421,10 @@ export async function handleOnboardingTurn(req: Request, deps: OnboardingTurnDep
 
   if (payload.turn_type === "onboarding_beat") {
     return handleOnboardingBeat(payload, deps, requestId);
+  }
+
+  if (payload.turn_type === "final_synthesis") {
+    return handleFinalSynthesis(payload, deps, requestId);
   }
 
   return jsonError("unknown turn_type", 400, requestId);

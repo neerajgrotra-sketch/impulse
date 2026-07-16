@@ -13,18 +13,16 @@ import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
 export function DebugOverlay() {
   const [expanded, setExpanded] = useState(false);
 
-  const phase = useAdaptiveCoachingStore((s) => s.phase);
   const rankedDimensions = useAdaptiveCoachingStore((s) => s.rankedDimensions);
-  const psychologicalState = useAdaptiveCoachingStore((s) => s.psychologicalState);
+  const understandingReview = useAdaptiveCoachingStore((s) => s.understandingReview);
   const debug = useAdaptiveCoachingStore((s) => s.debug);
+  const resetJourney = useAdaptiveCoachingStore((s) => s.resetJourney);
 
   if (!__DEV__ || process.env.EXPO_PUBLIC_AE001_DEBUG_OVERLAY !== "true") {
     return null;
   }
 
   const topDimensions = [...rankedDimensions].sort((a, b) => b.relevance - a.relevance).slice(0, 3);
-  const chosenBeat = phase.status === "coaching-beat" ? phase.beat : null;
-  const chosenMove = phase.status === "coaching-beat" ? phase.move : null;
 
   return (
     <View style={styles.container} pointerEvents="box-none">
@@ -45,10 +43,6 @@ export function DebugOverlay() {
               : topDimensions.map((d) => `${d.dimension} (${d.relevance.toFixed(2)})`).join(", ")}
           </Section>
 
-          <Section title="Coach Decision">{chosenMove ?? "—"}</Section>
-
-          <Section title="Next Coaching Beat">{chosenBeat ?? "—"}</Section>
-
           <Section title="Safety">{debug.lastSafetyTier ? `Tier: ${debug.lastSafetyTier}` : "—"}</Section>
 
           <Section title="Latency">
@@ -57,24 +51,24 @@ export function DebugOverlay() {
 
           <Section title="Request ID">{debug.lastRequestId ?? "—"}</Section>
 
-          <Section title="Current Psychological State">
-            {psychologicalState ? (
-              <>
-                {`Observed: ${psychologicalState.observed.join(", ") || "—"}\n`}
-                {`Inferred: ${
-                  psychologicalState.inferred.map((i) => `${i.statement} (${i.confidence.toFixed(2)})`).join(", ") ||
-                  "—"
-                }\n`}
-                {`Unknown: ${psychologicalState.unknown.join(", ") || "—"}`}
-              </>
-            ) : (
-              "—"
-            )}
+          <Section title="Understanding">
+            {understandingReview
+              ? `Confidence: ${understandingReview.confidence}\nThemes: ${understandingReview.emergingThemes.join(", ") || "—"}`
+              : "—"}
           </Section>
 
           <Section title="Current JSON payload">
             {debug.lastRawPayload ? JSON.stringify(debug.lastRawPayload, null, 2) : "—"}
           </Section>
+
+          <Pressable
+            onPress={() => resetJourney("everything")}
+            style={styles.resetButton}
+            accessibilityRole="button"
+            accessibilityLabel="Reset test session"
+          >
+            <Text style={styles.resetButtonText}>Reset test session</Text>
+          </Pressable>
         </ScrollView>
       )}
     </View>
@@ -132,5 +126,18 @@ const styles = StyleSheet.create({
   sectionBody: {
     ...typography.caption,
     color: colors.inkSecondary,
+  },
+  resetButton: {
+    marginTop: spacing.xs,
+    backgroundColor: colors.state.danger,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
+    alignItems: "center",
+  },
+  resetButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.background.gradientStart,
   },
 });

@@ -2,6 +2,7 @@ import {
   isHardStopResponse,
   OnboardingTurnApiError,
   requestCoachingBeat,
+  requestFinalSynthesis,
   requestInspiration,
   toCalmUserMessage,
 } from "@/services/onboardingTurnApi";
@@ -107,6 +108,85 @@ describe("onboardingTurnApi", () => {
       expect(result.chosenBeat).toBe("Clarification");
       expect(result.chosenMove).toBe("Question");
       expect(result.psychologicalState.observed).toEqual(["wants healthier habits"]);
+    }
+  });
+
+  it("requestFinalSynthesis parses a successful structured understanding review", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({
+        safety: { tier: "none", hard_stop: false },
+        understanding: {
+          headline: "Excellence on your own terms",
+          core_aspiration: "You want to become exceptional without letting comparison define you.",
+          interpretation: "You appear to value mastery and disciplined daily progress.",
+          identity_statement: "Someone who builds mastery patiently.",
+          emerging_themes: ["Self-defined success", "Disciplined mastery"],
+          uncertainties: ["The specific area of life where you want to become exceptional is still unclear."],
+          confidence: "medium",
+        },
+        request_id: "req-synth",
+        prompt_version: "final-synthesis-v1",
+        latency_ms: 1200,
+      })
+    );
+
+    const result = await requestFinalSynthesis({
+      firstName: "Maya",
+      becomingResponse: "I wanna be very best",
+      visionCanvas: [{ id: "1", text: "Someone chasing the edge of their own potential", origin: "thought_tap", edited: false, source: "ai" }],
+    });
+    expect(isHardStopResponse(result)).toBe(false);
+    if (!isHardStopResponse(result)) {
+      expect(result.understanding.headline).toBe("Excellence on your own terms");
+      expect(result.understanding.confidence).toBe("medium");
+      expect(result.understanding.emergingThemes).toHaveLength(2);
+      expect(result.requestId).toBe("req-synth");
+    }
+  });
+
+  it("requestFinalSynthesis throws invalid-response rather than surfacing a malformed/partial review", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({
+        safety: { tier: "none", hard_stop: false },
+        understanding: {
+          headline: "Excellence on your own terms",
+          // interpretation missing — a malformed response, never silently rendered
+          identity_statement: "Someone who builds mastery patiently.",
+          emerging_themes: [],
+          uncertainties: [],
+          confidence: "medium",
+        },
+        request_id: "req-bad",
+        prompt_version: "final-synthesis-v1",
+        latency_ms: 900,
+      })
+    );
+
+    await expect(
+      requestFinalSynthesis({
+        firstName: "Maya",
+        becomingResponse: "text",
+        visionCanvas: [{ id: "1", text: "fragment", origin: "typed", edited: false, source: "user" }],
+      })
+    ).rejects.toMatchObject({ kind: "invalid-response" });
+  });
+
+  it("requestFinalSynthesis parses a hard-stop response distinctly", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({
+        safety: { tier: "crisis", hard_stop: true, message: "please reach out to someone" },
+        request_id: "req-crisis",
+      })
+    );
+
+    const result = await requestFinalSynthesis({
+      firstName: "Maya",
+      becomingResponse: "text",
+      visionCanvas: [{ id: "1", text: "fragment", origin: "typed", edited: false, source: "user" }],
+    });
+    expect(isHardStopResponse(result)).toBe(true);
+    if (isHardStopResponse(result)) {
+      expect(result.safety.tier).toBe("crisis");
     }
   });
 

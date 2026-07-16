@@ -3,6 +3,7 @@ export { BreathingOrb } from "./BreathingOrb";
 export { EditableVisionCard } from "./EditableVisionCard";
 export { EmphasizedText } from "./EmphasizedText";
 export { GradientBackground } from "./GradientBackground";
+export { MomentSphere } from "./MomentSphere";
 export { PlaceholderScreen } from "./PlaceholderScreen";
 export { PrimaryButton } from "./PrimaryButton";
 export { ThoughtBubble } from "./ThoughtBubble";

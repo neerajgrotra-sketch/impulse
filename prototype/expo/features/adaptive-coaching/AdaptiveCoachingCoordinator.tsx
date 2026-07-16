@@ -1,17 +1,15 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { GradientBackground } from "@/components";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useVoiceCapture } from "@/hooks/useVoiceCapture";
 import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
-import { colors, spacing, typography } from "@/theme";
 import type { AdaptivePhase } from "@/types/adaptiveCoaching";
 import { BuildBadge } from "./components/BuildBadge";
 import { DebugOverlay } from "./components/DebugOverlay";
-import { CoachingBeatScreen } from "./screens/CoachingBeatScreen";
 import { MomentOneScreen } from "./screens/MomentOneScreen";
 import { NameCollectionScreen } from "./screens/NameCollectionScreen";
 import { SafetyHandoffScreen } from "./screens/SafetyHandoffScreen";
+import { UnderstandingReviewScreen } from "./screens/UnderstandingReviewScreen";
 import { VisionCanvasScreen } from "./screens/VisionCanvasScreen";
 
 /**
@@ -28,7 +26,6 @@ export function AdaptiveCoachingCoordinator() {
   const setFirstName = useAdaptiveCoachingStore((s) => s.setFirstName);
   const beginMomentOne = useAdaptiveCoachingStore((s) => s.beginMomentOne);
   const submitBecomingResponse = useAdaptiveCoachingStore((s) => s.submitBecomingResponse);
-  const reset = useAdaptiveCoachingStore((s) => s.reset);
   const reduceMotion = useReduceMotion();
   const voiceCapture = useVoiceCapture();
 
@@ -85,39 +82,14 @@ export function AdaptiveCoachingCoordinator() {
       case "inspiration-vision":
       case "reviewing":
         return <VisionCanvasScreen voiceCapture={voiceCapture} />;
-      case "coaching-beat":
-        return <CoachingBeatScreen beat={phase.beat} move={phase.move} message={phase.message} />;
+      case "understanding-review":
+        return <UnderstandingReviewScreen />;
       case "safety-hand-off":
         return <SafetyHandoffScreen message={phase.message} />;
-      case "failed":
-        return <FailedScreen message={phase.message} onRetry={reset} />;
     }
   }
 }
 
-function FailedScreen({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <View style={styles.container}>
-      <GradientBackground />
-      <View style={styles.failedContent}>
-        <Text style={[typography.body, styles.failedText]}>{message}</Text>
-        <Pressable onPress={onRetry} hitSlop={8} accessibilityRole="button" accessibilityLabel="Start over">
-          <Text style={[typography.bodySecondary, styles.retryLabel]}>Start over</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  failedContent: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.xl,
-    gap: spacing.md,
-  },
-  failedText: { textAlign: "center" },
-  retryLabel: { textDecorationLine: "underline", color: colors.accent },
 });

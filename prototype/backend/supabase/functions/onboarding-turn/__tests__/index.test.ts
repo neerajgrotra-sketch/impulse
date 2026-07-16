@@ -6,6 +6,7 @@
 // prerequisite for the experiment to run at all, even moderated.
 import { assertEquals } from "@std/assert";
 import { handleOnboardingTurn, type OnboardingTurnDeps } from "../index.ts";
+import { CoachEngineError } from "../../_shared/coachEngine.ts";
 import { IdentityEngineError } from "../../_shared/identityEngine.ts";
 import { SafetyClassificationError, type SafetyClassification, type SafetyTier } from "../../_shared/safetyEngine.ts";
 
@@ -44,6 +45,31 @@ function depsWithTier(tier: SafetyTier, overrides: Partial<OnboardingTurnDeps> =
         flags: [],
         moveDowngraded: false,
       }),
+    synthesizeUnderstanding: () =>
+      Promise.resolve({
+        headline: "Excellence on your own terms",
+        coreAspiration: "You want to become exceptional without letting comparison define you.",
+        interpretation:
+          "You appear to value mastery, disciplined daily progress, and personal growth. Success is becoming less about outperforming other people and more about reaching your own potential while valuing the process.",
+        identityStatement:
+          "Someone who builds mastery patiently, measures growth against themselves, and enjoys the climb.",
+        emergingThemes: ["Self-defined success", "Disciplined mastery", "Process over outcome"],
+        uncertainties: ["The specific area of life where you want to become exceptional is still unclear."],
+        confidence: "medium" as const,
+      }),
+    ...overrides,
+  };
+}
+
+function finalSynthesisRequestBody(overrides: Record<string, unknown> = {}) {
+  return {
+    turn_type: "final_synthesis",
+    first_name: "Maya",
+    becoming_response: "I wanna be very best",
+    vision_canvas: [
+      { text: "Someone chasing the edge of their own potential", source: "ai", edited: false },
+      { text: "A person defining 'best' on their own terms", source: "ai", edited: false },
+    ],
     ...overrides,
   };
 }
@@ -166,6 +192,7 @@ Deno.test("red-team: outbound re-check hard-stops onboarding_beat even when inbo
         flags: [],
         moveDowngraded: false,
       }),
+    synthesizeUnderstanding: () => Promise.reject(new Error("not used")),
   };
   const res = await handleOnboardingTurn(
     request({
@@ -250,6 +277,113 @@ Deno.test("move-eligibility guard: a downgraded move is reported as such in the 
   const body = await res.json();
   assertEquals(body.move_downgraded, true);
   assertEquals(body.chosen_move, "Affirm");
+});
+
+// --- final_synthesis (Understanding Review) ---
+
+Deno.test("golden: final_synthesis with ordinary content returns 200 and a structured understanding review", async () => {
+  const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), depsWithTier("none"));
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.safety.hard_stop, false);
+  assertEquals(typeof body.understanding.headline, "string");
+  assertEquals(typeof body.understanding.core_aspiration, "string");
+  assertEquals(typeof body.understanding.interpretation, "string");
+  assertEquals(typeof body.understanding.identity_statement, "string");
+  assertEquals(Array.isArray(body.understanding.emerging_themes), true);
+  assertEquals(Array.isArray(body.understanding.uncertainties), true);
+  assertEquals(["low", "medium", "high"].includes(body.understanding.confidence), true);
+  assertEquals(typeof body.request_id, "string");
+  assertEquals(body.prompt_version, "final-synthesis-v1");
+});
+
+Deno.test("fixture: the spec's 'I wanna be very best' input produces a schema-valid UnderstandingReview", async () => {
+  const res = await handleOnboardingTurn(
+    request(
+      finalSynthesisRequestBody({
+        vision_canvas: [
+          { text: "Someone chasing the edge of their own potential", source: "ai", edited: false },
+          { text: "Someone learning to enjoy the climb, not just the peak", source: "ai", edited: false },
+          { text: "A person defining 'best' on their own terms", source: "ai", edited: false },
+          { text: "A person who measures growth against themselves, not others", source: "ai", edited: false },
+          { text: "Someone building small daily practices toward mastery", source: "ai", edited: false },
+        ],
+      }),
+    ),
+    depsWithTier("none"),
+  );
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  const { understanding } = body;
+  assertEquals(understanding.headline, "Excellence on your own terms");
+  assertEquals(understanding.core_aspiration, "You want to become exceptional without letting comparison define you.");
+  assertEquals(understanding.confidence, "medium");
+  assertEquals(understanding.uncertainties.length > 0, true);
+});
+
+Deno.test("red-team: elevated tier hard-stops final_synthesis before the model is ever called", async () => {
+  let synthesisCalled = false;
+  const deps = depsWithTier("elevated", {
+    synthesizeUnderstanding: () => {
+      synthesisCalled = true;
+      return Promise.reject(new Error("should never be called"));
+    },
+  });
+  const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.safety.hard_stop, true);
+  assertEquals(body.safety.tier, "elevated");
+  assertEquals(body.understanding, undefined, "no understanding review may reach the response on a hard-stop tier");
+  assertEquals(synthesisCalled, false, "Coach Engine must never run on a hard-stop tier");
+});
+
+Deno.test("red-team: outbound re-check hard-stops final_synthesis even when inbound was clean", async () => {
+  const deps: OnboardingTurnDeps = {
+    classifyRisk: (text: string) =>
+      Promise.resolve({ tier: text.includes("flagged") ? "elevated" : "none", rationaleCode: "test" }),
+    generateInspiration: () => Promise.reject(new Error("not used")),
+    chooseOnboardingBeat: () => Promise.reject(new Error("not used")),
+    synthesizeUnderstanding: () =>
+      Promise.resolve({
+        headline: "a headline the outbound check flagged",
+        coreAspiration: "aspiration",
+        interpretation: "interpretation",
+        identityStatement: "identity",
+        emergingThemes: ["theme"],
+        uncertainties: ["uncertainty"],
+        confidence: "medium" as const,
+      }),
+  };
+  const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
+  const body = await res.json();
+  assertEquals(body.safety.hard_stop, true, "an outbound-only risk signal must still hard-stop the turn");
+});
+
+Deno.test("fail-closed: final_synthesis's pre-call safety classification failure returns 503, never proceeds as if safe", async () => {
+  const deps = depsWithTier("none", {
+    classifyRisk: () => Promise.reject(new SafetyClassificationError("boom")),
+  });
+  const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
+  assertEquals(res.status, 503);
+});
+
+Deno.test("fail-closed: final_synthesis's model call failing outright returns 502, never a 200", async () => {
+  const deps = depsWithTier("none", {
+    synthesizeUnderstanding: () => Promise.reject(new CoachEngineError("model output was not valid JSON")),
+  });
+  const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
+  assertEquals(res.status, 502);
+  const body = await res.json();
+  assertEquals(body.understanding, undefined);
+});
+
+Deno.test("validation: empty vision_canvas is rejected for final_synthesis", async () => {
+  const res = await handleOnboardingTurn(
+    request(finalSynthesisRequestBody({ vision_canvas: [] })),
+    depsWithTier("none"),
+  );
+  assertEquals(res.status, 400);
 });
 
 // --- Request validation ---

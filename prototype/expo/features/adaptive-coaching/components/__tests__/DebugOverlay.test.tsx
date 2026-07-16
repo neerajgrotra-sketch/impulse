@@ -10,7 +10,7 @@ describe("DebugOverlay", () => {
     process.env.EXPO_PUBLIC_AE001_DEBUG_OVERLAY = originalEnv;
     // @ts-expect-error — restoring the global test-only flag
     globalThis.__DEV__ = originalDev;
-    useAdaptiveCoachingStore.getState().reset();
+    useAdaptiveCoachingStore.getState().resetJourney("everything");
   });
 
   it("renders null when __DEV__ is false, regardless of the env flag", async () => {
@@ -59,5 +59,19 @@ describe("DebugOverlay", () => {
     expect(getByText(/LLM: 842ms/)).toBeTruthy();
     expect(getByText("req-abc")).toBeTruthy();
     expect(getByText(/Tier: none/)).toBeTruthy();
+  });
+
+  it("the 'Reset test session' button calls resetJourney('everything')", async () => {
+    // @ts-expect-error test-only override
+    globalThis.__DEV__ = true;
+    process.env.EXPO_PUBLIC_AE001_DEBUG_OVERLAY = "true";
+    useAdaptiveCoachingStore.getState().setFirstName("Maya");
+
+    const { getByLabelText } = await render(<DebugOverlay />);
+    await fireEvent.press(getByLabelText("Expand debug overlay"));
+    await fireEvent.press(getByLabelText("Reset test session"));
+
+    expect(useAdaptiveCoachingStore.getState().firstName).toBe("");
+    expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "name" });
   });
 });

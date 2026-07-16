@@ -15,12 +15,10 @@ import type { VoiceCapture } from "@/hooks/useVoiceCapture";
 jest.mock("@/services/onboardingTurnApi", () => ({
   ...jest.requireActual("@/services/onboardingTurnApi"),
   requestInspiration: jest.fn(),
-  requestCoachingBeat: jest.fn(),
 }));
-import { requestCoachingBeat, requestInspiration } from "@/services/onboardingTurnApi";
+import { requestInspiration } from "@/services/onboardingTurnApi";
 
 const mockRequestInspiration = requestInspiration as jest.MockedFunction<typeof requestInspiration>;
-const mockRequestCoachingBeat = requestCoachingBeat as jest.MockedFunction<typeof requestCoachingBeat>;
 
 function buildVoiceCapture(): VoiceCapture {
   return {
@@ -46,12 +44,11 @@ describe("VisionCanvasScreen", () => {
     // Not wrapped in `act()` — nothing is mounted yet, and doing so leaves
     // this project's async `render()` unable to pick up the store's
     // already-correct phase on the component's first render.
-    useAdaptiveCoachingStore.getState().reset();
+    useAdaptiveCoachingStore.getState().resetJourney("everything");
     useAdaptiveCoachingStore.getState().setFirstName("Maya");
     useAdaptiveCoachingStore.getState().beginMomentOne();
     useAdaptiveCoachingStore.getState().submitBecomingResponse("I want to follow through more");
     mockRequestInspiration.mockReset();
-    mockRequestCoachingBeat.mockReset();
   });
 
   it("calls requestInspiration on mount while in the generating-inspiration phase, then reveals thoughts on success", async () => {
@@ -180,4 +177,31 @@ describe("VisionCanvasScreen", () => {
     expect(useAdaptiveCoachingStore.getState().visionCanvas).toHaveLength(1);
   });
 
+  it("Continue is a synchronous transition to understanding-review, resolving dismissed thoughts, with no network call", async () => {
+    mockRequestInspiration.mockResolvedValue({
+      safety: { tier: "none", hardStop: false },
+      rankedDimensions: [{ dimension: "Habits & Discipline", relevance: 1 }],
+      thoughts: [
+        { id: "t1", dimension: "Habits & Discipline", text: "Someone who follows through", source: "ai" },
+        { id: "t2", dimension: "Habits & Discipline", text: "Someone who shows up daily", source: "ai" },
+      ],
+      requestId: "req-continue",
+      promptVersion: "v2",
+      latencyMs: 500,
+      retryCount: 0,
+    });
+    const { findByLabelText } = await renderScreen();
+    const keepChip = await findByLabelText(/Select thought: Someone who follows through/);
+    await fireEvent.press(keepChip);
+    const dismissChip = await findByLabelText(/Dismiss thought: Someone who shows up daily/);
+    await fireEvent.press(dismissChip);
+
+    const continueButton = await findByLabelText("Continue");
+    await fireEvent.press(continueButton);
+
+    expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "understanding-review" });
+    expect(useAdaptiveCoachingStore.getState().dismissedThoughts).toEqual([
+      { text: "Someone who shows up daily", source: "ai" },
+    ]);
+  });
 });

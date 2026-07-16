@@ -1,6 +1,7 @@
 import type {
   CoachingBeat,
   CoachingMove,
+  FinalSynthesisResponse,
   GeneratedThought,
   HardStopResponse,
   InspirationResponse,
@@ -8,6 +9,8 @@ import type {
   PsychologicalState,
   RankedDimension,
   SafetyTier,
+  ThoughtSource,
+  UnderstandingReview,
   VisionFragment,
 } from "@/types/adaptiveCoaching";
 
@@ -52,6 +55,11 @@ const INSPIRATION_TIMEOUT_MS = 24_000;
 // onboarding_beat is out of scope for the inspiration-generation rebuild —
 // kept at its original, generous timeout.
 const ONBOARDING_BEAT_TIMEOUT_MS = 120_000;
+
+// final_synthesis is a single prose-generation call with the same latency
+// profile as the onboarding_beat call it replaces as AE-001's terminal turn
+// — same generous budget, not a new number to justify.
+const FINAL_SYNTHESIS_TIMEOUT_MS = 120_000;
 
 export type OnboardingTurnApiErrorKind = "config" | "network" | "timeout" | "aborted" | "server" | "invalid-response";
 
@@ -246,6 +254,66 @@ function parseOnboardingBeatResponse(raw: unknown): OnboardingBeatResponse | Har
   };
 }
 
+function isValidConfidence(value: unknown): value is UnderstandingReview["confidence"] {
+  return value === "low" || value === "medium" || value === "high";
+}
+
+function parseUnderstandingReview(value: unknown): UnderstandingReview {
+  if (typeof value !== "object" || value === null) {
+    throw new OnboardingTurnApiError("invalid-response", "Response is missing the understanding review.");
+  }
+  const r = value as Record<string, unknown>;
+  if (
+    !isNonEmptyString(r.headline) ||
+    !isNonEmptyString(r.core_aspiration) ||
+    !isNonEmptyString(r.interpretation) ||
+    !isNonEmptyString(r.identity_statement) ||
+    !Array.isArray(r.emerging_themes) ||
+    !Array.isArray(r.uncertainties) ||
+    !isValidConfidence(r.confidence)
+  ) {
+    // Never silently fall back to rendering something partial/garbled —
+    // a malformed synthesis is a failure to surface, never concatenated
+    // fragment text presented as if it were a real understanding review.
+    throw new OnboardingTurnApiError("invalid-response", "Understanding review is missing required fields.");
+  }
+  return {
+    headline: r.headline,
+    coreAspiration: r.core_aspiration,
+    interpretation: r.interpretation,
+    identityStatement: r.identity_statement,
+    emergingThemes: r.emerging_themes as string[],
+    uncertainties: r.uncertainties as string[],
+    confidence: r.confidence,
+  };
+}
+
+function parseFinalSynthesisResponse(raw: unknown): FinalSynthesisResponse | HardStopResponse {
+  if (typeof raw !== "object" || raw === null) {
+    throw new OnboardingTurnApiError("invalid-response", "Response was not an object.");
+  }
+  const body = raw as Record<string, unknown>;
+  const safety = body.safety as Record<string, unknown> | undefined;
+  if (typeof safety !== "object" || safety === null) {
+    throw new OnboardingTurnApiError("invalid-response", "Response is missing safety information.");
+  }
+
+  const hardStop = parseHardStop(body, safety);
+  if (hardStop) return hardStop;
+
+  if (!isValidSafetyTier(safety.tier)) {
+    throw new OnboardingTurnApiError("invalid-response", "Response has an invalid safety tier.");
+  }
+
+  return {
+    safety: { tier: safety.tier, hardStop: false },
+    understanding: parseUnderstandingReview(body.understanding),
+    requestId: String(body.request_id ?? ""),
+    promptVersion: String(body.prompt_version ?? ""),
+    latencyMs: Number(body.latency_ms ?? 0),
+  };
+}
+
 /**
  * A discriminated-union type guard is needed here because the discriminant
  * (`hardStop`) lives on a nested `safety` property, one level below the
@@ -253,7 +321,7 @@ function parseOnboardingBeatResponse(raw: unknown): OnboardingBeatResponse | Har
  * top-level discriminant, so `result.safety.hardStop` alone won't narrow
  * `result`. This function is the one place that does. */
 export function isHardStopResponse(
-  result: InspirationResponse | OnboardingBeatResponse | HardStopResponse
+  result: InspirationResponse | OnboardingBeatResponse | FinalSynthesisResponse | HardStopResponse
 ): result is HardStopResponse {
   return result.safety.hardStop === true;
 }
@@ -295,6 +363,31 @@ export async function requestCoachingBeat(
     options?.signal
   );
   return parseOnboardingBeatResponse(raw);
+}
+
+export async function requestFinalSynthesis(
+  input: {
+    firstName: string;
+    becomingResponse: string;
+    visionCanvas: VisionFragment[];
+    dismissedThoughts?: { text: string; source: ThoughtSource }[];
+    correctionNote?: string;
+  },
+  options?: { signal?: AbortSignal }
+): Promise<FinalSynthesisResponse | HardStopResponse> {
+  const raw = await postOnboardingTurn(
+    {
+      turn_type: "final_synthesis",
+      first_name: input.firstName,
+      becoming_response: input.becomingResponse,
+      vision_canvas: input.visionCanvas.map((f) => ({ text: f.text, source: f.source, edited: f.edited })),
+      dismissed_thoughts: input.dismissedThoughts,
+      correction_note: input.correctionNote,
+    },
+    FINAL_SYNTHESIS_TIMEOUT_MS,
+    options?.signal
+  );
+  return parseFinalSynthesisResponse(raw);
 }
 
 /** Never surface `err.message` directly — mirrors `blueprintApi.ts`'s own

@@ -1,12 +1,11 @@
 import { create } from "zustand";
 import type {
   AdaptivePhase,
-  CoachingBeat,
-  CoachingMove,
   GeneratedThought,
-  PsychologicalState,
   RankedDimension,
   SafetyTier,
+  ThoughtSource,
+  UnderstandingReview,
   VisionFragment,
 } from "@/types/adaptiveCoaching";
 
@@ -39,8 +38,12 @@ type AdaptiveCoachingState = {
   rankedDimensions: RankedDimension[];
   thoughtPool: GeneratedThought[];
   visionCanvas: VisionFragment[];
-  psychologicalState: PsychologicalState | null;
-  isSubmitting: boolean;
+  /** Captured at the Vision Canvas -> Understanding Review handoff (the
+   *  screen resolves its locally-tracked dismissed IDs against the offered
+   *  pool before dispatching) — never accumulated incrementally, since
+   *  dismissal tracking itself stays screen-local, same as before. */
+  dismissedThoughts: { text: string; source: ThoughtSource }[];
+  understandingReview: UnderstandingReview | null;
   debug: DebugSnapshot;
 
   setFirstName: (name: string) => void;
@@ -68,15 +71,19 @@ type AdaptiveCoachingState = {
   removeVisionFragment: (id: string) => void;
   reorderVisionFragments: (fromIndex: number, toIndex: number) => void;
 
-  beginSubmittingForBeat: () => void;
-  beatReceived: (
-    result: { beat: CoachingBeat; move: CoachingMove; message: string; psychologicalState: PsychologicalState },
-    debug: DebugSnapshot
-  ) => void;
-  beatHardStopped: (message: string) => void;
-  beatFailed: (message: string) => void;
+  /** Vision Canvas's Continue — a pure phase transition, same shape as
+   *  `submitBecomingResponse`. The actual final-synthesis fetch is owned by
+   *  UnderstandingReviewScreen, not triggered here. */
+  beginUnderstandingReview: (dismissedThoughts: { text: string; source: ThoughtSource }[]) => void;
+  understandingReviewReceived: (review: UnderstandingReview) => void;
+  understandingReviewHardStopped: (message: string) => void;
 
-  reset: () => void;
+  /** The one atomic reset action — "restart" preserves firstName and lands
+   *  on Moment One (the person is already known); "everything" clears
+   *  firstName too and lands back on Name Collection. Both scopes clear
+   *  every other piece of AE-001 state in one `set()` call, never field by
+   *  field from a screen. */
+  resetJourney: (scope: "restart" | "everything") => void;
 };
 
 const initialState = {
@@ -86,8 +93,8 @@ const initialState = {
   rankedDimensions: [] as RankedDimension[],
   thoughtPool: [] as GeneratedThought[],
   visionCanvas: [] as VisionFragment[],
-  psychologicalState: null as PsychologicalState | null,
-  isSubmitting: false,
+  dismissedThoughts: [] as { text: string; source: ThoughtSource }[],
+  understandingReview: null as UnderstandingReview | null,
   debug: { lastSafetyTier: null, lastLatencyMs: null, lastRawPayload: null, lastRequestId: null } as DebugSnapshot,
 };
 
@@ -163,21 +170,19 @@ export const useAdaptiveCoachingStore = create<AdaptiveCoachingState>((set, get)
     set({ visionCanvas: next });
   },
 
-  beginSubmittingForBeat: () => set({ isSubmitting: true }),
+  beginUnderstandingReview: (dismissedThoughts) =>
+    set({ dismissedThoughts, phase: { status: "understanding-review" } }),
 
-  beatReceived: (result, debug) =>
+  understandingReviewReceived: (review) => set({ understandingReview: review }),
+
+  understandingReviewHardStopped: (message) => set({ phase: { status: "safety-hand-off", message } }),
+
+  resetJourney: (scope) =>
     set({
-      isSubmitting: false,
-      psychologicalState: result.psychologicalState,
-      phase: { status: "coaching-beat", beat: result.beat, move: result.move, message: result.message },
-      debug,
+      ...initialState,
+      ...(scope === "restart" ? { firstName: get().firstName } : {}),
+      phase: scope === "restart" ? { status: "moment-one" } : { status: "name" },
     }),
-
-  beatHardStopped: (message) => set({ isSubmitting: false, phase: { status: "safety-hand-off", message } }),
-
-  beatFailed: (message) => set({ isSubmitting: false, phase: { status: "failed", message } }),
-
-  reset: () => set({ ...initialState, visionCanvas: [], thoughtPool: [], rankedDimensions: [] }),
 }));
 
 export { MAX_VISION_FRAGMENTS };

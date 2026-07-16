@@ -1,5 +1,3 @@
-import type { CoachingBeat } from "@/types/adaptiveCoaching";
-
 /**
  * AE-001-only, log-only telemetry (docs/experiments/AE-001-first-adaptive-coaching-loop.md).
  * No analytics SDK exists in this codebase and none is added here — every
@@ -15,7 +13,9 @@ export type TelemetryEvent =
   | { type: "thoughts_deleted"; count: number }
   | { type: "input_modality"; modality: "voice" | "typed" }
   | { type: "ai_wording_accepted_vs_edited"; accepted: number; edited: number }
-  | { type: "coaching_beat_chosen"; beat: CoachingBeat }
+  | { type: "understanding_review_confidence"; confidence: "low" | "medium" | "high" }
+  | { type: "understanding_review_adjusted" }
+  | { type: "journey_reset"; scope: "restart" | "everything" }
   | { type: "inspiration_timeout"; retry_count: number }
   | { type: "inspiration_fallback_shown" }
   | { type: "inspiration_more_like_this" };

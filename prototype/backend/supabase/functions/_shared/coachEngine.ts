@@ -8,7 +8,12 @@
 import { anthropic, MODEL } from "./anthropicClient.ts";
 import { findBannedWord } from "./bannedWords.ts";
 import type { LifeDimension } from "./lifeDimensions.ts";
-import { assembleOnboardingBeatPrompt, type VisionFragmentInput } from "./promptBuilder.ts";
+import {
+  assembleFinalSynthesisPrompt,
+  assembleOnboardingBeatPrompt,
+  type FinalSynthesisFragmentInput,
+  type VisionFragmentInput,
+} from "./promptBuilder.ts";
 
 export type CoachingBeat = "Reflection" | "Recognition" | "Clarification" | "Ownership";
 export type CoachingMove = "Reflect" | "Reframe" | "Question" | "Contrast" | "Commit" | "Affirm" | "Hold-Silence";
@@ -75,6 +80,117 @@ const ONBOARDING_BEAT_SCHEMA = {
   required: ["psychological_state", "chosen_beat", "chosen_move", "message", "rationale_code", "confidence", "flags"],
   additionalProperties: false,
 } as const;
+
+export type SynthesisConfidence = "low" | "medium" | "high";
+
+export interface UnderstandingReview {
+  headline: string;
+  coreAspiration: string;
+  interpretation: string;
+  identityStatement: string;
+  emergingThemes: string[];
+  uncertainties: string[];
+  confidence: SynthesisConfidence;
+}
+
+export interface SynthesizeUnderstandingInput {
+  firstName: string;
+  becomingResponse: string;
+  visionCanvas: FinalSynthesisFragmentInput[];
+  dismissedThoughts?: { text: string; source: "ai" | "fallback" | "user" }[];
+  correctionNote?: string;
+}
+
+const UNDERSTANDING_REVIEW_SCHEMA = {
+  type: "object",
+  properties: {
+    headline: { type: "string" },
+    core_aspiration: { type: "string" },
+    interpretation: { type: "string" },
+    identity_statement: { type: "string" },
+    emerging_themes: { type: "array", items: { type: "string" } },
+    uncertainties: { type: "array", items: { type: "string" } },
+    confidence: { type: "string", enum: ["low", "medium", "high"] },
+  },
+  required: [
+    "headline",
+    "core_aspiration",
+    "interpretation",
+    "identity_statement",
+    "emerging_themes",
+    "uncertainties",
+    "confidence",
+  ],
+  additionalProperties: false,
+} as const;
+
+// Same reasoning as callModel above: the Understanding Review is this
+// turn's whole deliverable, so it gets the model's real default effort.
+async function callSynthesisModel(userMessage: string, system: string) {
+  return await anthropic.messages.create({
+    model: MODEL.dialogue,
+    max_tokens: 2048,
+    output_config: {
+      effort: "high",
+      format: { type: "json_schema", schema: UNDERSTANDING_REVIEW_SCHEMA },
+    },
+    system,
+    messages: [{ role: "user", content: userMessage }],
+  });
+}
+
+export async function synthesizeUnderstanding(input: SynthesizeUnderstandingInput): Promise<UnderstandingReview> {
+  const { system, userMessage } = assembleFinalSynthesisPrompt(input);
+
+  let response;
+  try {
+    response = await callSynthesisModel(userMessage, system);
+  } catch (err) {
+    throw new CoachEngineError(
+      `final-synthesis generation failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (response.stop_reason === "refusal") {
+    throw new CoachEngineError("model declined to respond");
+  }
+
+  const rawText = extractJSONText(response.content);
+  if (!rawText) throw new CoachEngineError("no text content returned");
+
+  let parsed: {
+    headline: string;
+    core_aspiration: string;
+    interpretation: string;
+    identity_statement: string;
+    emerging_themes: string[];
+    uncertainties: string[];
+    confidence: SynthesisConfidence;
+  };
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new CoachEngineError("model output was not valid JSON");
+  }
+
+  // Tone lint on every generated prose field — same bar chooseOnboardingBeat
+  // already applies to its own message.
+  for (const field of [parsed.headline, parsed.core_aspiration, parsed.interpretation, parsed.identity_statement]) {
+    const bannedHit = findBannedWord(field);
+    if (bannedHit) {
+      throw new CoachEngineError(`generated understanding review contained banned word "${bannedHit}"`);
+    }
+  }
+
+  return {
+    headline: parsed.headline,
+    coreAspiration: parsed.core_aspiration,
+    interpretation: parsed.interpretation,
+    identityStatement: parsed.identity_statement,
+    emergingThemes: parsed.emerging_themes,
+    uncertainties: parsed.uncertainties,
+    confidence: parsed.confidence,
+  };
+}
 
 function extractJSONText(content: { type: string; text?: string }[]): string | null {
   const block = content.find((b) => b.type === "text");

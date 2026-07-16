@@ -81,6 +81,30 @@ export type OnboardingBeatResponse = {
   latencyMs: number;
 };
 
+/** AE-001's terminal turn — replaces `onboarding_beat`'s role as the final
+ *  screen's content source (see the postmortem this responds to,
+ *  docs/experiments/AE-001-postmortem-and-design-review.md Part 6, on why a
+ *  single uniformly-confident-voice output is the wrong shape here). A
+ *  synthesized interpretation, never a concatenation of the selected Vision
+ *  Canvas fragments. */
+export type UnderstandingReview = {
+  headline: string;
+  coreAspiration: string;
+  interpretation: string;
+  identityStatement: string;
+  emergingThemes: string[];
+  uncertainties: string[];
+  confidence: "low" | "medium" | "high";
+};
+
+export type FinalSynthesisResponse = {
+  safety: { tier: SafetyTier; hardStop: false };
+  understanding: UnderstandingReview;
+  requestId: string;
+  promptVersion: string;
+  latencyMs: number;
+};
+
 export type HardStopResponse = {
   safety: { tier: "elevated" | "crisis"; hardStop: true; message: string };
   requestId: string;
@@ -97,6 +121,5 @@ export type AdaptivePhase =
   | { status: "generating-inspiration" }
   | { status: "inspiration-vision" }
   | { status: "reviewing" }
-  | { status: "coaching-beat"; beat: CoachingBeat; move: CoachingMove; message: string }
-  | { status: "safety-hand-off"; message: string }
-  | { status: "failed"; message: string };
+  | { status: "understanding-review" }
+  | { status: "safety-hand-off"; message: string };

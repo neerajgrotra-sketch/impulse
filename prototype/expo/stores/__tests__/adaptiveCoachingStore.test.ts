@@ -4,7 +4,7 @@ import { MAX_VISION_FRAGMENTS, useAdaptiveCoachingStore } from "@/stores/adaptiv
 describe("useAdaptiveCoachingStore", () => {
   beforeEach(() => {
     act(() => {
-      useAdaptiveCoachingStore.getState().reset();
+      useAdaptiveCoachingStore.getState().resetJourney("everything");
     });
   });
 
@@ -146,51 +146,107 @@ describe("useAdaptiveCoachingStore", () => {
     expect(useAdaptiveCoachingStore.getState().visionCanvas.map((f) => f.text)).toEqual(["a"]);
   });
 
-  it("beginSubmittingForBeat sets isSubmitting true; beatReceived clears it and advances to coaching-beat", () => {
+  it("beginUnderstandingReview stores the dismissed thoughts and advances to understanding-review", () => {
     act(() => {
-      useAdaptiveCoachingStore.getState().beginSubmittingForBeat();
-    });
-    expect(useAdaptiveCoachingStore.getState().isSubmitting).toBe(true);
-
-    act(() => {
-      useAdaptiveCoachingStore.getState().beatReceived(
-        {
-          beat: "Clarification",
-          move: "Question",
-          message: "What does that look like day to day?",
-          psychologicalState: { observed: [], inferred: [], unknown: [] },
-        },
-        { lastSafetyTier: "none", lastLatencyMs: 900, lastRawPayload: {}, lastRequestId: null }
-      );
+      useAdaptiveCoachingStore.getState().beginUnderstandingReview([{ text: "a thought they skipped", source: "ai" }]);
     });
     const state = useAdaptiveCoachingStore.getState();
-    expect(state.isSubmitting).toBe(false);
-    expect(state.phase).toEqual({
-      status: "coaching-beat",
-      beat: "Clarification",
-      move: "Question",
-      message: "What does that look like day to day?",
-    });
+    expect(state.phase).toEqual({ status: "understanding-review" });
+    expect(state.dismissedThoughts).toEqual([{ text: "a thought they skipped", source: "ai" }]);
   });
 
-  it("beatHardStopped and beatFailed both clear isSubmitting", () => {
+  it("understandingReviewReceived stores the structured review without changing phase", () => {
     act(() => {
-      useAdaptiveCoachingStore.getState().beginSubmittingForBeat();
-      useAdaptiveCoachingStore.getState().beatHardStopped("please reach out");
+      useAdaptiveCoachingStore.getState().beginUnderstandingReview([]);
+      useAdaptiveCoachingStore.getState().understandingReviewReceived({
+        headline: "Excellence on your own terms",
+        coreAspiration: "You want to become exceptional without letting comparison define you.",
+        interpretation: "interpretation",
+        identityStatement: "identity",
+        emergingThemes: ["theme"],
+        uncertainties: ["uncertainty"],
+        confidence: "medium",
+      });
     });
-    expect(useAdaptiveCoachingStore.getState().isSubmitting).toBe(false);
+    const state = useAdaptiveCoachingStore.getState();
+    expect(state.phase).toEqual({ status: "understanding-review" });
+    expect(state.understandingReview?.headline).toBe("Excellence on your own terms");
+  });
+
+  it("understandingReviewHardStopped routes to safety-hand-off", () => {
+    act(() => {
+      useAdaptiveCoachingStore.getState().understandingReviewHardStopped("please reach out");
+    });
     expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "safety-hand-off", message: "please reach out" });
   });
 
-  it("reset returns to the initial state", () => {
-    act(() => {
+  describe("resetJourney", () => {
+    function populateJourney() {
       useAdaptiveCoachingStore.getState().setFirstName("Maya");
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "x", origin: "typed", edited: false, source: "user" });
-      useAdaptiveCoachingStore.getState().reset();
+      useAdaptiveCoachingStore.getState().beginMomentOne();
+      useAdaptiveCoachingStore.getState().submitBecomingResponse("I want to follow through");
+      useAdaptiveCoachingStore.getState().inspirationReceived(
+        {
+          rankedDimensions: [{ dimension: "Health & Energy", relevance: 0.9 }],
+          thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger", source: "ai" }],
+        },
+        { lastSafetyTier: "none", lastLatencyMs: 800, lastRawPayload: {}, lastRequestId: "req-1" }
+      );
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "Someone who follows through", origin: "thought_tap", edited: false, source: "ai" });
+      useAdaptiveCoachingStore.getState().beginUnderstandingReview([{ text: "dismissed one", source: "ai" }]);
+      useAdaptiveCoachingStore.getState().understandingReviewReceived({
+        headline: "headline",
+        coreAspiration: "aspiration",
+        interpretation: "interpretation",
+        identityStatement: "identity",
+        emergingThemes: ["theme"],
+        uncertainties: ["uncertainty"],
+        confidence: "medium",
+      });
+    }
+
+    it("'restart' preserves firstName, clears the reflection journey, and lands on moment-one", () => {
+      act(populateJourney);
+      act(() => {
+        useAdaptiveCoachingStore.getState().resetJourney("restart");
+      });
+      const state = useAdaptiveCoachingStore.getState();
+      expect(state.firstName).toBe("Maya");
+      expect(state.phase).toEqual({ status: "moment-one" });
+      expect(state.becomingResponse).toBe("");
+      expect(state.rankedDimensions).toHaveLength(0);
+      expect(state.thoughtPool).toHaveLength(0);
+      expect(state.visionCanvas).toHaveLength(0);
+      expect(state.dismissedThoughts).toHaveLength(0);
+      expect(state.understandingReview).toBeNull();
     });
-    const state = useAdaptiveCoachingStore.getState();
-    expect(state.phase).toEqual({ status: "name" });
-    expect(state.firstName).toBe("");
-    expect(state.visionCanvas).toHaveLength(0);
+
+    it("'everything' also clears firstName and lands on name", () => {
+      act(populateJourney);
+      act(() => {
+        useAdaptiveCoachingStore.getState().resetJourney("everything");
+      });
+      const state = useAdaptiveCoachingStore.getState();
+      expect(state.firstName).toBe("");
+      expect(state.phase).toEqual({ status: "name" });
+      expect(state.visionCanvas).toHaveLength(0);
+      expect(state.understandingReview).toBeNull();
+    });
+
+    it("no old thoughts reappear after either reset scope", () => {
+      act(populateJourney);
+      act(() => {
+        useAdaptiveCoachingStore.getState().resetJourney("restart");
+      });
+      expect(useAdaptiveCoachingStore.getState().thoughtPool).toHaveLength(0);
+      expect(useAdaptiveCoachingStore.getState().visionCanvas).toHaveLength(0);
+
+      act(populateJourney);
+      act(() => {
+        useAdaptiveCoachingStore.getState().resetJourney("everything");
+      });
+      expect(useAdaptiveCoachingStore.getState().thoughtPool).toHaveLength(0);
+      expect(useAdaptiveCoachingStore.getState().visionCanvas).toHaveLength(0);
+    });
   });
 });

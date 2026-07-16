@@ -3,16 +3,16 @@ import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, View } fro
 import * as Haptics from "expo-haptics";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BreathingOrb, GradientBackground, PrimaryButton, VoiceCaptureButton } from "@/components";
-import type { VoiceOrbState } from "@/components";
+import { GradientBackground, MomentSphere, PrimaryButton, VoiceCaptureButton } from "@/components";
 import { VisionCanvas } from "@/components/VisionCanvas";
 import type { LifeDimension } from "@/constants/lifeDimensions";
 import { pickContextualThoughts, type ThoughtTheme } from "@/constants/thoughtLibrary";
+import { AE001_TOTAL_MOMENTS } from "@/features/adaptive-coaching/journey";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useScreenReaderEnabled } from "@/hooks/useScreenReaderEnabled";
 import { useSpeechRecognitionAdapter } from "@/hooks/useSpeechRecognitionAdapter";
 import type { VoiceCapture } from "@/hooks/useVoiceCapture";
-import { isHardStopResponse, requestCoachingBeat, requestInspiration, toCalmUserMessage } from "@/services/onboardingTurnApi";
+import { isHardStopResponse, requestInspiration, toCalmUserMessage } from "@/services/onboardingTurnApi";
 import { MAX_VISION_FRAGMENTS, useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
 import { colors, fontFamily, radius, spacing, typography } from "@/theme";
 import type { GeneratedThought } from "@/types/adaptiveCoaching";
@@ -77,9 +77,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   const firstName = useAdaptiveCoachingStore((s) => s.firstName);
   const becomingResponse = useAdaptiveCoachingStore((s) => s.becomingResponse);
   const thoughtPool = useAdaptiveCoachingStore((s) => s.thoughtPool);
-  const rankedDimensions = useAdaptiveCoachingStore((s) => s.rankedDimensions);
   const visionCanvas = useAdaptiveCoachingStore((s) => s.visionCanvas);
-  const isSubmitting = useAdaptiveCoachingStore((s) => s.isSubmitting);
   const inspirationReceived = useAdaptiveCoachingStore((s) => s.inspirationReceived);
   const moreThoughtsReceived = useAdaptiveCoachingStore((s) => s.moreThoughtsReceived);
   const inspirationHardStopped = useAdaptiveCoachingStore((s) => s.inspirationHardStopped);
@@ -87,13 +85,9 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   const editVisionFragment = useAdaptiveCoachingStore((s) => s.editVisionFragment);
   const removeVisionFragment = useAdaptiveCoachingStore((s) => s.removeVisionFragment);
   const reorderVisionFragments = useAdaptiveCoachingStore((s) => s.reorderVisionFragments);
-  const beginSubmittingForBeat = useAdaptiveCoachingStore((s) => s.beginSubmittingForBeat);
-  const beatReceived = useAdaptiveCoachingStore((s) => s.beatReceived);
-  const beatHardStopped = useAdaptiveCoachingStore((s) => s.beatHardStopped);
-  const beatFailed = useAdaptiveCoachingStore((s) => s.beatFailed);
+  const beginUnderstandingReview = useAdaptiveCoachingStore((s) => s.beginUnderstandingReview);
   const goBackToMomentOne = useAdaptiveCoachingStore((s) => s.goBackToMomentOne);
 
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   // Set inside an effect, never as a `useRef(Date.now())` initializer — the
   // latter calls the impure `Date.now()` on every render pass (React's
@@ -302,51 +296,23 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speechAdapter.status, speechAdapter.finalTranscript]);
 
-  async function handleContinue() {
-    // Reads the store directly rather than the render-time `isSubmitting`
-    // closure value — the PrimaryButton's `disabled` prop only reflects
-    // `isSubmitting` after a re-render, so two taps dispatched in the same
-    // tick could otherwise both reach here before either sees `disabled`
-    // flip. `getState()` is always current, immune to that race.
-    if (useAdaptiveCoachingStore.getState().isSubmitting) return;
-    setErrorMessage(null);
-    beginSubmittingForBeat();
-    const controller = new AbortController();
-    try {
-      const result = await requestCoachingBeat(
-        { firstName, becomingResponse, rankedDimensions, visionCanvas },
-        { signal: controller.signal }
-      );
-      if (isHardStopResponse(result)) {
-        beatHardStopped(result.safety.message);
-        return;
-      }
-      logTelemetryEvent({ type: "time_to_continue", ms: Date.now() - continueStartRef.current });
-      const acceptedFragments = visionCanvas.filter((f) => f.origin === "thought_tap" && !f.edited).length;
-      const editedFragments = visionCanvas.length - acceptedFragments;
-      logTelemetryEvent({ type: "ai_wording_accepted_vs_edited", accepted: acceptedFragments, edited: editedFragments });
-      logTelemetryEvent({ type: "coaching_beat_chosen", beat: result.chosenBeat });
-      beatReceived(
-        {
-          beat: result.chosenBeat,
-          move: result.chosenMove,
-          message: result.message,
-          psychologicalState: result.psychologicalState,
-        },
-        { lastSafetyTier: result.safety.tier, lastLatencyMs: result.latencyMs, lastRawPayload: result, lastRequestId: null }
-      );
-    } catch (err) {
-      beatFailed(toCalmUserMessage(err));
-    }
+  // A pure phase transition, same shape as MomentOneScreen's onSubmit ->
+  // submitBecomingResponse: the actual final-synthesis fetch is owned by
+  // UnderstandingReviewScreen (matching this screen's own convention of
+  // owning its inspiration fetch), not triggered from here. Dismissed
+  // thoughts are resolved against offeredThoughts now, while this screen
+  // still has them in scope — they are never persisted to the store
+  // otherwise.
+  function handleContinue() {
+    const dismissedThoughts = offeredThoughts
+      .filter((t) => dismissedIds.has(t.id))
+      .map((t) => ({ text: t.text, source: t.source }));
+    logTelemetryEvent({ type: "time_to_continue", ms: Date.now() - continueStartRef.current });
+    const acceptedFragments = visionCanvas.filter((f) => f.origin === "thought_tap" && !f.edited).length;
+    const editedFragments = visionCanvas.length - acceptedFragments;
+    logTelemetryEvent({ type: "ai_wording_accepted_vs_edited", accepted: acceptedFragments, edited: editedFragments });
+    beginUnderstandingReview(dismissedThoughts);
   }
-
-  const orbState: VoiceOrbState = isGenerating
-    ? "processing"
-    : isSubmitting
-      ? "processing"
-      : speechAdapter.status === "listening"
-        ? "listening"
-        : "idle";
 
   return (
     <View style={styles.container}>
@@ -371,7 +337,15 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
           <Text style={styles.title} accessibilityRole="header">
             {"Tell Me More – What's in Your Mind"}
           </Text>
-          <BreathingOrb state={orbState} listening={speechAdapter.status === "listening"} connected={!isGenerating} reduceMotion={reduceMotion} />
+          <MomentSphere
+            currentMoment={2}
+            totalMoments={AE001_TOTAL_MOMENTS}
+            state={isGenerating ? "thinking" : "idle"}
+            listening={speechAdapter.status === "listening"}
+            hasError={showingRecovery}
+            connected={!isGenerating}
+            reduceMotion={reduceMotion}
+          />
           {isGenerating && elapsedState !== "pending" && (
             <Animated.Text entering={reduceMotion ? undefined : FadeIn.duration(400)} style={[typography.caption, styles.statusText]}>
               Good answers take a little longer — still working…
@@ -454,14 +428,11 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
           </Pressable>
         </View>
 
-        {errorMessage && <Text style={[typography.caption, styles.errorText]}>{errorMessage}</Text>}
-
         <PrimaryButton
           label="Continue"
           onPress={handleContinue}
           fullWidth
-          loading={isSubmitting}
-          disabled={visionCanvas.length === 0 || isSubmitting || isGenerating}
+          disabled={visionCanvas.length === 0 || isGenerating}
         />
       </Pressable>
     </View>
@@ -529,7 +500,6 @@ const styles = StyleSheet.create({
   canvasScroll: { flex: 1, width: "100%" },
   actionsRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.lg },
   typeLabel: { color: colors.inkSecondary },
-  errorText: { textAlign: "center", color: colors.state.danger },
   moreLikeThisButton: { alignSelf: "center", paddingVertical: spacing.xs },
   moreLikeThisText: { textDecorationLine: "underline", color: colors.accent },
   fallbackNotice: { textAlign: "center", paddingVertical: spacing.xxs },

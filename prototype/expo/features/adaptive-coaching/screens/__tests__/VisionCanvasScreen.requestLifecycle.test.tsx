@@ -20,12 +20,10 @@ import type { VoiceCapture } from "@/hooks/useVoiceCapture";
 jest.mock("@/services/onboardingTurnApi", () => ({
   ...jest.requireActual("@/services/onboardingTurnApi"),
   requestInspiration: jest.fn(),
-  requestCoachingBeat: jest.fn(),
 }));
-import { requestCoachingBeat, requestInspiration } from "@/services/onboardingTurnApi";
+import { requestInspiration } from "@/services/onboardingTurnApi";
 
 const mockRequestInspiration = requestInspiration as jest.MockedFunction<typeof requestInspiration>;
-const mockRequestCoachingBeat = requestCoachingBeat as jest.MockedFunction<typeof requestCoachingBeat>;
 
 function buildVoiceCapture(): VoiceCapture {
   return {
@@ -48,15 +46,14 @@ async function renderScreen() {
 
 describe("VisionCanvasScreen — request lifecycle edge cases", () => {
   beforeEach(() => {
-    useAdaptiveCoachingStore.getState().reset();
+    useAdaptiveCoachingStore.getState().resetJourney("everything");
     useAdaptiveCoachingStore.getState().setFirstName("Maya");
     useAdaptiveCoachingStore.getState().beginMomentOne();
     useAdaptiveCoachingStore.getState().submitBecomingResponse("I want to follow through more");
     mockRequestInspiration.mockReset();
-    mockRequestCoachingBeat.mockReset();
   });
 
-  it("duplicate submission: two rapid taps on Continue fire requestCoachingBeat once, not twice", async () => {
+  it("duplicate submission: two rapid taps on Continue are harmless — a synchronous transition, not a network call to race", async () => {
     mockRequestInspiration.mockResolvedValue({
       safety: { tier: "none", hardStop: false },
       rankedDimensions: [{ dimension: "Habits & Discipline", relevance: 1 }],
@@ -66,48 +63,18 @@ describe("VisionCanvasScreen — request lifecycle edge cases", () => {
       latencyMs: 500,
       retryCount: 0,
     });
-    // A normal, immediately-resolving mock — no manually-held-open promise.
-    // The reentrancy guard (VisionCanvasScreen.tsx's `getState().isSubmitting`
-    // check) runs synchronously inside the SECOND tap's event handler,
-    // before either tap's own async work has a chance to resolve, so the
-    // assertion below doesn't need to race anything.
-    mockRequestCoachingBeat.mockResolvedValue({
-      safety: { tier: "none", hardStop: false },
-      psychologicalState: { observed: [], inferred: [], unknown: [] },
-      chosenBeat: "Reflection",
-      chosenMove: "Reflect",
-      message: "message",
-      rationaleCode: "x",
-      confidence: 0.5,
-      moveDowngraded: false,
-      promptVersion: "v1",
-      latencyMs: 100,
-    });
 
     const { findByLabelText } = await renderScreen();
     const thoughtChip = await findByLabelText(/Select thought: Someone who follows through/);
     await fireEvent.press(thoughtChip);
     const continueButton = await findByLabelText("Continue");
 
-    // Both taps dispatched before either resolves — this is exactly the
-    // race a render-timing-dependent `disabled` prop alone can't close.
-    // Wrapped in ONE async `act()`, not two independent `fireEvent.press`
-    // calls: `handleContinue` is an async handler, and two back-to-back
-    // `fireEvent.press` calls each open their own act() scope around a
-    // callback that returns a promise neither one awaits — "overlapping
-    // act() calls" that were found, empirically, to corrupt React's global
-    // act-environment tracking for the rest of the test *process* (every
-    // later test's initial mount effects silently stopped flushing). A
-    // single async act() spanning both presses closes cleanly instead.
     await act(async () => {
       fireEvent.press(continueButton);
       fireEvent.press(continueButton);
     });
 
-    expect(mockRequestCoachingBeat).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(useAdaptiveCoachingStore.getState().phase.status).toBe("coaching-beat");
-    });
+    expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "understanding-review" });
   });
 
   it("duplicate submission: two rapid taps on 'More like this' fire requestInspiration once for the regeneration", async () => {

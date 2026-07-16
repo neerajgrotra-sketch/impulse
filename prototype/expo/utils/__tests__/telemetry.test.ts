@@ -20,7 +20,7 @@ describe("logTelemetryEvent", () => {
   });
 
   it("never logs raw text — every event shape is counts/enums/durations only", () => {
-    logTelemetryEvent({ type: "coaching_beat_chosen", beat: "Clarification" });
+    logTelemetryEvent({ type: "understanding_review_confidence", confidence: "medium" });
     const loggedPayload = consoleSpy.mock.calls[0][1];
     const serialized = JSON.stringify(loggedPayload);
     // Mechanical proxy for "no raw text": every field value is either a

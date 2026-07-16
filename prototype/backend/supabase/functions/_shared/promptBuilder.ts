@@ -118,3 +118,70 @@ export function assembleOnboardingBeatPrompt(input: OnboardingBeatPromptInput): 
     userMessage: fenceAsContent("the person's Vision Canvas fragments", joinedFragments),
   };
 }
+
+export interface FinalSynthesisFragmentInput {
+  text: string;
+  source: "ai" | "fallback" | "user";
+  edited: boolean;
+}
+
+export interface FinalSynthesisPromptInput {
+  firstName: string;
+  becomingResponse: string;
+  visionCanvas: FinalSynthesisFragmentInput[];
+  dismissedThoughts?: { text: string; source: "ai" | "fallback" | "user" }[];
+  correctionNote?: string;
+}
+
+/** Layers 1+2+4 for the "final synthesis" turn (the Understanding Review) —
+ *  replaces `onboarding_beat`'s role as AE-001's terminal turn. Reads the
+ *  person's selected Vision Canvas fragments and produces one structured,
+ *  evidence-grounded interpretation, not a per-fragment paraphrase or a
+ *  motivational message — see the review this responds to,
+ *  docs/experiments/AE-001-postmortem-and-design-review.md Part 6, on why
+ *  the un-tagged, uniformly-confident-voice failure mode named there for
+ *  inspiration-generation applies just as much to a synthesis turn that
+ *  skips the same discipline. */
+export function assembleFinalSynthesisPrompt(input: FinalSynthesisPromptInput): AssembledPrompt {
+  const layer1Task = `You are creating an evidence-grounded understanding review, not a motivational summary. Determine what the selected statements collectively reveal that no single statement says alone. Synthesize the underlying aspiration, the user's emerging definition of success, and the identity direction connecting the fragments. Do not concatenate or list the fragments. State uncertainty explicitly.
+
+Rules:
+- Do not concatenate, paraphrase-in-sequence, or list the fragments back to the person. Find the pattern connecting them that no single fragment states alone.
+- Do not merely paraphrase each selected thought one at a time.
+- Do not write generic motivational copy ("be your best self," "unlock your potential") without explaining, from the actual evidence below, what that specifically means for this person.
+- Do not invent life facts (occupation, relationships, history, specifics) that are not present in what they said or selected.
+- Do not state an inference with more confidence than the evidence supports — if something is a guess rather than a direct read, it belongs in uncertainties, never asserted as fact in interpretation or identityStatement.
+- Preserve the person's own language where it is genuinely useful, but do not simply copy every fragment's phrase back in sequence — that is exactly the concatenation failure this task exists to avoid.
+- Return only schema-valid structured JSON — no prose outside the schema fields.
+
+Produce exactly these fields:
+1. headline — a short, specific phrase capturing the core pattern you found (not a generic title like "Your Journey").
+2. coreAspiration — one sentence naming the central aspiration, in your own synthesized words, not a copied fragment.
+3. interpretation — 2-4 sentences explaining what these selected statements collectively reveal. Distinguish what is directly evidenced from what is inferred, and name the tension or distinction underlying the aspiration (for example: mastery vs. comparison, process vs. outcome, self-defined vs. externally-defined) if the evidence actually supports one.
+4. identityStatement — one concise sentence describing the identity direction connecting the fragments, in the product's existing "Someone who..." voice.
+5. emergingThemes — 3-5 short theme labels (2-4 words each), each a distinct pattern from the evidence, not a restatement of a single fragment.
+6. uncertainties — 1-3 honest, specific statements of what remains genuinely unclear about this person from what they've shared so far. Never leave this empty if any real ambiguity exists in a short amount of evidence (it almost always does at this early stage); do not pad it with false uncertainty if given unusually rich, clear input.
+7. confidence — "low", "medium", or "high", reflecting how well-grounded interpretation and identityStatement are in the actual evidence given (fewer or vaguer fragments should mean lower confidence, never inflated to sound more certain than the evidence supports).`;
+
+  const layer2 = `This person's name: ${input.firstName || "the user"}.`;
+
+  const fragmentLines = input.visionCanvas
+    .map((f, i) => `${i + 1}. "${f.text}" (source: ${f.source}, ${f.edited ? "edited by the person" : "unedited"})`)
+    .join("\n");
+
+  const dismissedBlock =
+    input.dismissedThoughts && input.dismissedThoughts.length > 0
+      ? `\n\nThis person was also shown, but did NOT select, the following thoughts. Use these only as negative signal about what does not resonate with them — never treat them as the person's own words or as evidence of who they are:\n${input.dismissedThoughts.map((t, i) => `${i + 1}. "${t.text}"`).join("\n")}`
+      : "";
+
+  const correctionBlock = input.correctionNote
+    ? `\n\nThe person felt an earlier version of this understanding needed adjustment. Their correction: "${input.correctionNote}". Revise your synthesis to account for this, while staying grounded in the fragments above — do not invent new facts to satisfy the correction.`
+    : "";
+
+  const layer4 = `Their original answer to "Who are you becoming?" was: ${fenceAsContent("their original answer", input.becomingResponse)}\n\nThe fragments they selected into their Vision Canvas — this is the primary evidence your synthesis must be grounded in:`;
+
+  return {
+    system: [CONSTITUTION_LAYER, layer1Task, layer2, layer4].join("\n\n"),
+    userMessage: fenceAsContent("the person's selected Vision Canvas fragments", fragmentLines) + dismissedBlock + correctionBlock,
+  };
+}

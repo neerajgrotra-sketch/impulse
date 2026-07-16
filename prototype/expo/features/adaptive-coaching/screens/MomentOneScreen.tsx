@@ -14,8 +14,8 @@ import {
 import * as Haptics from "expo-haptics";
 import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BreathingOrb, EditableVisionCard, GradientBackground, PrimaryButton, VoiceCaptureButton } from "@/components";
-import type { VoiceOrbState } from "@/components";
+import { EditableVisionCard, GradientBackground, MomentSphere, PrimaryButton, VoiceCaptureButton } from "@/components";
+import { AE001_TOTAL_MOMENTS } from "@/features/adaptive-coaching/journey";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useScreenReaderEnabled } from "@/hooks/useScreenReaderEnabled";
 import { useSpeechRecognitionAdapter } from "@/hooks/useSpeechRecognitionAdapter";
@@ -123,17 +123,6 @@ export function MomentOneScreen({ voiceCapture, onSubmit, initialText = "" }: Mo
     Keyboard.dismiss();
   }
 
-  const orbState: VoiceOrbState =
-    speechAdapter.status === "error"
-      ? "error"
-      : speechAdapter.status === "listening"
-        ? "listening"
-        : speechAdapter.status === "processing"
-          ? "processing"
-          : keyboardVisible
-            ? "typing"
-            : "idle";
-
   const canContinue = visionText.trim().length > 0;
   const showTranscriptOverlay =
     (speechAdapter.status === "listening" || speechAdapter.status === "processing") &&
@@ -163,7 +152,15 @@ export function MomentOneScreen({ voiceCapture, onSubmit, initialText = "" }: Mo
               <Text style={styles.title} accessibilityRole="header">
                 Who Do You Want To Become?
               </Text>
-              <BreathingOrb state={orbState} listening={speechAdapter.status === "listening"} reduceMotion={reduceMotion} />
+              <MomentSphere
+                currentMoment={1}
+                totalMoments={AE001_TOTAL_MOMENTS}
+                state={speechAdapter.status === "processing" ? "thinking" : "idle"}
+                listening={speechAdapter.status === "listening"}
+                isTyping={keyboardVisible}
+                hasError={speechAdapter.status === "error"}
+                reduceMotion={reduceMotion}
+              />
             </View>
 
             <View style={styles.bottomSlot}>
