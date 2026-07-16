@@ -6,6 +6,7 @@
 // prerequisite for the experiment to run at all, even moderated.
 import { assertEquals } from "@std/assert";
 import { handleOnboardingTurn, type OnboardingTurnDeps } from "../index.ts";
+import { IdentityEngineError } from "../../_shared/identityEngine.ts";
 import { SafetyClassificationError, type SafetyClassification, type SafetyTier } from "../../_shared/safetyEngine.ts";
 
 function request(body: unknown, method = "POST"): Request {
@@ -16,13 +17,21 @@ function request(body: unknown, method = "POST"): Request {
   });
 }
 
+// `tier` now drives BOTH generateInspiration's embedded safety.tier (the
+// inspiration_generation path, since decisions/0010's fold-in means there is
+// no separate pre-call classification for that turn) and classifyRisk's
+// return (the onboarding_beat path, which is unchanged and still classifies
+// before routing). Tests below pick whichever field is relevant to the turn
+// type they exercise.
 function depsWithTier(tier: SafetyTier, overrides: Partial<OnboardingTurnDeps> = {}): OnboardingTurnDeps {
   return {
     classifyRisk: (): Promise<SafetyClassification> => Promise.resolve({ tier, rationaleCode: "test" }),
-    rankDimensionsAndGenerateThoughts: () =>
+    generateInspiration: () =>
       Promise.resolve({
+        safety: { tier, rationaleCode: "test" },
         rankedDimensions: [{ dimension: "Health & Energy", relevance: 0.9 }],
-        thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger every day" }],
+        thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger every day", source: "ai" as const }],
+        meta: { attempts: 1, providerLatencyMs: 400, parseLatencyMs: 1 },
       }),
     chooseOnboardingBeat: () =>
       Promise.resolve({
@@ -41,7 +50,7 @@ function depsWithTier(tier: SafetyTier, overrides: Partial<OnboardingTurnDeps> =
 
 // --- Golden cases: known-safe input proceeds normally ---
 
-Deno.test("golden: inspiration_generation with ordinary content returns 200 and ranked dimensions", async () => {
+Deno.test("golden: inspiration_generation with ordinary content returns 200, thoughts, and a request id", async () => {
   const res = await handleOnboardingTurn(
     request({ turn_type: "inspiration_generation", first_name: "Maya", becoming_response: "I want to be more present with my family" }),
     depsWithTier("none"),
@@ -50,6 +59,9 @@ Deno.test("golden: inspiration_generation with ordinary content returns 200 and 
   const body = await res.json();
   assertEquals(body.safety.hard_stop, false);
   assertEquals(Array.isArray(body.ranked_dimensions), true);
+  assertEquals(Array.isArray(body.thoughts), true);
+  assertEquals(typeof body.request_id, "string");
+  assertEquals(body.retry_count, 0);
 });
 
 Deno.test("golden: onboarding_beat with ordinary content returns 200 and a chosen beat/move", async () => {
@@ -67,6 +79,7 @@ Deno.test("golden: onboarding_beat with ordinary content returns 200 and a chose
   const body = await res.json();
   assertEquals(body.chosen_beat, "Reflection");
   assertEquals(body.chosen_move, "Reflect");
+  assertEquals(typeof body.request_id, "string");
 });
 
 Deno.test("golden: low tier still proceeds (not a hard-stop tier)", async () => {
@@ -81,23 +94,24 @@ Deno.test("golden: low tier still proceeds (not a hard-stop tier)", async () => 
 
 // --- Red-team subset: elevated/crisis must ALWAYS hard-stop, zero tolerance ---
 
-Deno.test("red-team: elevated tier hard-stops inspiration_generation, Identity Engine never called", async () => {
-  let identityEngineCalled = false;
-  const deps = depsWithTier("elevated", {
-    rankDimensionsAndGenerateThoughts: () => {
-      identityEngineCalled = true;
-      return Promise.reject(new Error("should never be called"));
-    },
-  });
+// Architecture note: unlike before this rebuild, the Identity Engine now
+// ALWAYS runs on inspiration_generation, even on an elevated/crisis tier —
+// there is no cheaper way to learn the tier than the one merged call that
+// also generates thoughts (decisions/0010's endorsed fold-in). The
+// guarantee this test enforces is no longer "the engine is never called";
+// it's the guarantee that actually matters: generated content NEVER
+// reaches the response body on a hard-stop tier.
+Deno.test("red-team: elevated tier hard-stops inspiration_generation — thoughts/ranked_dimensions never reach the response", async () => {
   const res = await handleOnboardingTurn(
     request({ turn_type: "inspiration_generation", becoming_response: "some concerning disclosure" }),
-    deps,
+    depsWithTier("elevated"),
   );
   assertEquals(res.status, 200);
   const body = await res.json();
   assertEquals(body.safety.hard_stop, true);
   assertEquals(body.safety.tier, "elevated");
-  assertEquals(identityEngineCalled, false, "Identity Engine must never run on a hard-stop tier");
+  assertEquals(body.thoughts, undefined, "generated thoughts must never appear in a hard-stop response");
+  assertEquals(body.ranked_dimensions, undefined, "ranked dimensions must never appear in a hard-stop response");
 });
 
 Deno.test("red-team: crisis tier hard-stops onboarding_beat, Coach Engine never called", async () => {
@@ -140,7 +154,7 @@ Deno.test("red-team: outbound re-check hard-stops onboarding_beat even when inbo
     classifyRisk: (text: string) =>
       // Inbound (vision canvas) is clean; outbound (generated message) trips.
       Promise.resolve({ tier: text.includes("generated") ? "elevated" : "none", rationaleCode: "test" }),
-    rankDimensionsAndGenerateThoughts: () => Promise.reject(new Error("not used")),
+    generateInspiration: () => Promise.reject(new Error("not used")),
     chooseOnboardingBeat: () =>
       Promise.resolve({
         psychologicalState: { observed: [], inferred: [], unknown: [] },
@@ -166,17 +180,46 @@ Deno.test("red-team: outbound re-check hard-stops onboarding_beat even when inbo
   assertEquals(body.safety.hard_stop, true, "an outbound-only risk signal must still hard-stop the turn");
 });
 
-// --- Fail-closed on safety classification failure ---
+// --- Fail-closed on failure ---
 
-Deno.test("fail-closed: safety classification failure returns 503, never proceeds as if safe", async () => {
+Deno.test("fail-closed: onboarding_beat's pre-call safety classification failure returns 503, never proceeds as if safe", async () => {
   const deps = depsWithTier("none", {
     classifyRisk: () => Promise.reject(new SafetyClassificationError("boom")),
+  });
+  const res = await handleOnboardingTurn(
+    request({
+      turn_type: "onboarding_beat",
+      becoming_response: "text",
+      ranked_dimensions: [],
+      vision_canvas: [{ text: "fragment" }],
+    }),
+    deps,
+  );
+  assertEquals(res.status, 503);
+});
+
+Deno.test("fail-closed: inspiration_generation's merged call failing outright returns an error status, never a 200", async () => {
+  const deps = depsWithTier("none", {
+    generateInspiration: () => Promise.reject(new IdentityEngineError("malformed_json", "model output was not valid JSON")),
   });
   const res = await handleOnboardingTurn(
     request({ turn_type: "inspiration_generation", becoming_response: "text" }),
     deps,
   );
-  assertEquals(res.status, 503);
+  assertEquals(res.status, 502);
+  const body = await res.json();
+  assertEquals(body.thoughts, undefined);
+});
+
+Deno.test("fail-closed: a timeout-category failure on inspiration_generation returns 504, distinct from other errors", async () => {
+  const deps = depsWithTier("none", {
+    generateInspiration: () => Promise.reject(new IdentityEngineError("timeout", "exceeded the 8000ms total budget")),
+  });
+  const res = await handleOnboardingTurn(
+    request({ turn_type: "inspiration_generation", becoming_response: "text" }),
+    deps,
+  );
+  assertEquals(res.status, 504);
 });
 
 // --- Move-eligibility guard surfaces correctly through the wire response ---

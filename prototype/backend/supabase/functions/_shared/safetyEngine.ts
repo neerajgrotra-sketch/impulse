@@ -35,15 +35,23 @@ const SAFETY_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const SAFETY_SYSTEM_PROMPT = `${CONSTITUTION_LAYER}
-
-Your only job right now is risk classification, matching docs/15 Constitution.md §3.1's four tiers exactly:
+/** The four-tier definitions, extracted so any call site that classifies
+ *  risk — this module's standalone classifier, or identityEngine.ts's
+ *  merged classify+generate call (decisions/0010's endorsed "fold real
+ *  per-turn risk-tier classification into the Engine's required call"
+ *  pattern) — describes the tiers identically. One copy, never two prompts
+ *  drifting apart on what "elevated" means. */
+export const SAFETY_TIER_DEFINITIONS = `Risk tiers, matching docs/15 Constitution.md §3.1's four tiers exactly:
 - "none": ordinary content, no risk signal.
 - "low": elevated negative affect (overwhelm, harsh self-talk, panic) but no indication of harm.
 - "elevated": concerning content — passive ideation, disclosure of abuse, active addiction relapse, escalating crisis, disordered patterns.
 - "crisis": imminent danger — active self-harm or suicidal intent, ongoing abuse, medical emergency, immediate danger to self or others.
 
-When uncertain, round UP a tier — a false escalation costs a moment of friction; a false de-escalation can cost a life. Return only the required JSON.`;
+When uncertain, round UP a tier — a false escalation costs a moment of friction; a false de-escalation can cost a life.`;
+
+const SAFETY_SYSTEM_PROMPT = `${CONSTITUTION_LAYER}
+
+Your only job right now is risk classification. ${SAFETY_TIER_DEFINITIONS} Return only the required JSON.`;
 
 function buildUserPrompt(text: string): string {
   // Fenced explicitly as content, never as instruction — the same

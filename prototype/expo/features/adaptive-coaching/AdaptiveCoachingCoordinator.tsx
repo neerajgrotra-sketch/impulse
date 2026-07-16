@@ -23,6 +23,7 @@ import { VisionCanvasScreen } from "./screens/VisionCanvasScreen";
  */
 export function AdaptiveCoachingCoordinator() {
   const phase = useAdaptiveCoachingStore((s) => s.phase);
+  const becomingResponse = useAdaptiveCoachingStore((s) => s.becomingResponse);
   const setFirstName = useAdaptiveCoachingStore((s) => s.setFirstName);
   const beginMomentOne = useAdaptiveCoachingStore((s) => s.beginMomentOne);
   const submitBecomingResponse = useAdaptiveCoachingStore((s) => s.submitBecomingResponse);
@@ -71,7 +72,13 @@ export function AdaptiveCoachingCoordinator() {
           />
         );
       case "moment-one":
-        return <MomentOneScreen voiceCapture={voiceCapture} onSubmit={submitBecomingResponse} />;
+        return (
+          <MomentOneScreen
+            voiceCapture={voiceCapture}
+            onSubmit={submitBecomingResponse}
+            initialText={becomingResponse}
+          />
+        );
       case "generating-inspiration":
       case "inspiration-vision":
       case "reviewing":

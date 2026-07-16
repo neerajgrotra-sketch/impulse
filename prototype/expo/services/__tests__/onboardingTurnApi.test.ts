@@ -35,9 +35,11 @@ describe("onboardingTurnApi", () => {
       jsonResponse({
         safety: { tier: "none", hard_stop: false },
         ranked_dimensions: [{ dimension: "Health & Energy", relevance: 0.9 }],
-        thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger" }],
-        prompt_version: "v1",
+        thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger", source: "ai" }],
+        request_id: "req-123",
+        prompt_version: "v2",
         latency_ms: 842,
+        retry_count: 0,
       })
     );
 
@@ -47,13 +49,25 @@ describe("onboardingTurnApi", () => {
       expect(result.rankedDimensions).toHaveLength(1);
       expect(result.thoughts).toHaveLength(1);
       expect(result.latencyMs).toBe(842);
+      expect(result.requestId).toBe("req-123");
+      expect(result.retryCount).toBe(0);
     }
+  });
+
+  it("requestInspiration maps a 504 (server-side generation timeout) to kind 'timeout'", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({ error: "inspiration generation failed: exceeded the 8000ms total budget", request_id: "req-504" }, 504)
+    );
+    await expect(requestInspiration({ firstName: "Maya", becomingResponse: "text" })).rejects.toMatchObject({
+      kind: "timeout",
+    });
   });
 
   it("requestInspiration parses a hard-stop response distinctly", async () => {
     globalThis.fetch = jest.fn().mockResolvedValue(
       jsonResponse({
         safety: { tier: "crisis", hard_stop: true, message: "please reach out to someone" },
+        request_id: "req-crisis",
       })
     );
 
@@ -62,6 +76,7 @@ describe("onboardingTurnApi", () => {
     if (isHardStopResponse(result)) {
       expect(result.safety.tier).toBe("crisis");
       expect(result.safety.message).toBe("please reach out to someone");
+      expect(result.requestId).toBe("req-crisis");
     }
   });
 
@@ -85,7 +100,7 @@ describe("onboardingTurnApi", () => {
       firstName: "Maya",
       becomingResponse: "text",
       rankedDimensions: [],
-      visionCanvas: [{ id: "1", text: "fragment", origin: "typed", edited: false }],
+      visionCanvas: [{ id: "1", text: "fragment", origin: "typed", edited: false, source: "user" }],
     });
     expect(isHardStopResponse(result)).toBe(false);
     if (!isHardStopResponse(result)) {

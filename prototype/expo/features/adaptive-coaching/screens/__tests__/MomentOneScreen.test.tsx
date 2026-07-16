@@ -15,10 +15,14 @@ function buildVoiceCapture(overrides: Partial<VoiceCapture> = {}): VoiceCapture 
   };
 }
 
-function renderScreen(onSubmit: (text: string) => void, voiceCapture: VoiceCapture = buildVoiceCapture()) {
+function renderScreen(
+  onSubmit: (text: string) => void,
+  voiceCapture: VoiceCapture = buildVoiceCapture(),
+  initialText?: string
+) {
   return render(
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <MomentOneScreen voiceCapture={voiceCapture} onSubmit={onSubmit} />
+      <MomentOneScreen voiceCapture={voiceCapture} onSubmit={onSubmit} initialText={initialText} />
     </SafeAreaProvider>
   );
 }
@@ -60,6 +64,19 @@ describe("MomentOneScreen", () => {
     await fireEvent.changeText(getByLabelText("Your vision"), "I want to follow through more");
     await fireEvent.press(getByLabelText("Continue"));
     expect(onSubmit).toHaveBeenCalledWith("I want to follow through more");
+  });
+
+  it("restores the exact prior statement when revisited with initialText (FAILURE UX: preserve all user input)", async () => {
+    const { getByLabelText, queryByText } = await renderScreen(
+      jest.fn(),
+      buildVoiceCapture(),
+      "I want to be the very best"
+    );
+    // Card is already revealed with the exact prior text — no "Type" prompt,
+    // no blank card, nothing lost.
+    expect(queryByText("Type")).toBeNull();
+    expect(getByLabelText("Your vision").props.value).toBe("I want to be the very best");
+    expect(getByLabelText("Continue").props.accessibilityState.disabled).toBe(false);
   });
 
   it("shows the voice capture button when voice is available, alongside Type (equal-weight parity)", async () => {

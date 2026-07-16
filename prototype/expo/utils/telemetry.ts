@@ -15,7 +15,10 @@ export type TelemetryEvent =
   | { type: "thoughts_deleted"; count: number }
   | { type: "input_modality"; modality: "voice" | "typed" }
   | { type: "ai_wording_accepted_vs_edited"; accepted: number; edited: number }
-  | { type: "coaching_beat_chosen"; beat: CoachingBeat };
+  | { type: "coaching_beat_chosen"; beat: CoachingBeat }
+  | { type: "inspiration_timeout"; retry_count: number }
+  | { type: "inspiration_fallback_shown" }
+  | { type: "inspiration_more_like_this" };
 
 export function logTelemetryEvent(event: TelemetryEvent): void {
   if (!__DEV__) return;

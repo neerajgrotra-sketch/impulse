@@ -28,6 +28,11 @@ const VISION_INPUT_ACCESSORY_ID = "ae001-moment-one-done-editing";
 type MomentOneScreenProps = {
   voiceCapture: VoiceCapture;
   onSubmit: (text: string) => void;
+  /** The store's `becomingResponse`, if this screen is being revisited (the
+   *  Vision Canvas recovery UI's "Edit statement" action, or the back
+   *  button) rather than reached fresh — FAILURE UX's "preserve all user
+   *  input" requires the original text still be here, not a blank card. */
+  initialText?: string;
 };
 
 /**
@@ -38,15 +43,15 @@ type MomentOneScreenProps = {
  * `IdentityInspirationScreen`'s Reflection→Capture mechanics without the
  * (not-yet-relevant) thought-tap path.
  */
-export function MomentOneScreen({ voiceCapture, onSubmit }: MomentOneScreenProps) {
+export function MomentOneScreen({ voiceCapture, onSubmit, initialText = "" }: MomentOneScreenProps) {
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
   const screenReaderEnabled = useScreenReaderEnabled();
   const speechAdapter = useSpeechRecognitionAdapter(voiceCapture);
 
-  const [visionText, setVisionText] = useState("");
+  const [visionText, setVisionText] = useState(initialText);
   const [displayTranscript, setDisplayTranscript] = useState("");
-  const [cardRevealed, setCardRevealed] = useState(false);
+  const [cardRevealed, setCardRevealed] = useState(initialText.trim().length > 0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [firstInteractionLogged, setFirstInteractionLogged] = useState(false);
   const inputRef = useRef<TextInput>(null);

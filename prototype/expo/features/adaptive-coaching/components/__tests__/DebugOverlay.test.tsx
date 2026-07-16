@@ -49,7 +49,7 @@ describe("DebugOverlay", () => {
         ],
         thoughts: [],
       },
-      { lastSafetyTier: "none", lastLatencyMs: 842, lastRawPayload: { ok: true } }
+      { lastSafetyTier: "none", lastLatencyMs: 842, lastRawPayload: { ok: true }, lastRequestId: "req-abc" }
     );
 
     const { getByLabelText, getByText } = await render(<DebugOverlay />);
@@ -57,6 +57,7 @@ describe("DebugOverlay", () => {
 
     expect(getByText(/Health & Energy \(0.91\)/)).toBeTruthy();
     expect(getByText(/LLM: 842ms/)).toBeTruthy();
+    expect(getByText("req-abc")).toBeTruthy();
     expect(getByText(/Tier: none/)).toBeTruthy();
   });
 });

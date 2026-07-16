@@ -13,6 +13,7 @@
 // least-trusted one, not just textually ordered within a single blob.
 import { CONSTITUTION_LAYER } from "./constitutionLayer.ts";
 import type { LifeDimension } from "./lifeDimensions.ts";
+import { SAFETY_TIER_DEFINITIONS } from "./safetyEngine.ts";
 
 /** Fences user-authored text as content to reason about, never as an
  *  instruction to obey — reused by every assembly function below and by
@@ -35,17 +36,31 @@ export interface InspirationPromptInput {
 /** Layers 1+2+4 for the "generate inspiration" turn — there is no prior
  *  session (Layer 2 is minimal: just the name), and Layer 4's frame is the
  *  user's own Curiosity answer, not a Decision Engine frame (this is an
- *  onboarding surface, not an ordinary Impulse Moment turn). */
+ *  onboarding surface, not an ordinary Impulse Moment turn).
+ *
+ *  One request, two jobs, in this order: classify risk first, generate
+ *  second — decisions/0010's endorsed shape for folding real per-turn
+ *  risk-tier classification into the Engine's required call, rather than a
+ *  separate classifier call ahead of it. Ordering the instructions
+ *  classify-then-generate (and putting `safety` first in the output schema)
+ *  is deliberate: it asks the model to make the safety judgment as its own
+ *  first act, not a label bolted onto content it already committed to
+ *  generating. mapTierToAction (safetyEngine.ts) still makes the actual
+ *  proceed/hard-stop decision in code — the model's tier is a signal, never
+ *  authoritative on its own. */
 export function assembleInspirationPrompt(input: InspirationPromptInput): AssembledPrompt {
-  const layer1Task = `Your task: given what this person just said in answer to "Who are you becoming?", rank ALL of the following canonical Life Dimensions by relevance to them (every dimension gets a score, none are omitted), then generate approximately 20 short thought fragments (6-12 words each, emotionally neutral, inspiring, never prescriptive or diagnostic) drawn mostly from the highest-ranked dimensions. Life Dimensions are canonical, fixed, and NEVER goals/tasks/habits — they are the semantic layer you use to understand this person's life, not content to show them directly.
+  const layer1Task = `Your task has two parts, in order — do the first before you do the second:
 
-Canonical Life Dimensions (rank every one): ${input.dimensionEnumValues.join(", ")}.
+1. Classify the risk tier of this person's answer below. ${SAFETY_TIER_DEFINITIONS}
+2. Generate exactly 8 short thought fragments (6-12 words each, emotionally neutral, inspiring, never prescriptive or diagnostic) that are directly and specifically grounded in what this person actually said — not generic identity content, not drawn from a fixed list. If their answer clearly centers on one or two themes, most of the 8 should reflect those themes; at most 1-2 may offer a different, explicitly complementary interpretation. Tag each thought with the single Life Dimension it's closest to, from this canonical list: ${input.dimensionEnumValues.join(", ")}. Life Dimensions are a tagging aid, never content shown to the user.
 
-Each thought must be identity-shaped ("Someone who..." or a bare quality, never "I want..." or "I wish...") and must never contain a banned word or deficit-framed language ("doesn't currently...", "stop doing..."). A thought should read as optional inspiration to try on, never a diagnosis of who this person already is — the same bar this product already holds its curated content to.`;
+Each thought must be identity-shaped ("Someone who..." or a bare quality, never "I want..." or "I wish...") and must never contain a banned word or deficit-framed language ("doesn't currently...", "stop doing..."). A thought should read as optional inspiration to try on, never a diagnosis of who this person already is — the same bar this product already holds its curated content to.
+
+If you classify tier "elevated" or "crisis", still generate your best-effort 8 thoughts as instructed (the caller decides whether to show them — never withhold effort on the classification's account), but never let the classification itself soften toward "none"/"low" because generation would otherwise feel awkward to pair with a hard stop.`;
 
   const layer2 = `This person's name: ${input.firstName || "the user"}. This is the very first thing they have ever said to this product — there is no prior session history.`;
 
-  const layer4 = `Their answer to "Who are you becoming?" is the entire basis for your ranking and generation below.`;
+  const layer4 = `Their answer to "Who are you becoming?" is the entire basis for both your classification and your generation below.`;
 
   return {
     system: [CONSTITUTION_LAYER, layer1Task, layer2, layer4].join("\n\n"),

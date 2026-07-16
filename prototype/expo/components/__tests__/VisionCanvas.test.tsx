@@ -3,7 +3,7 @@ import { VisionCanvas } from "@/components/VisionCanvas";
 import type { VisionFragment } from "@/types/adaptiveCoaching";
 
 function fragment(id: string, text: string): VisionFragment {
-  return { id, text, origin: "typed", edited: false };
+  return { id, text, origin: "typed", edited: false, source: "user" };
 }
 
 describe("VisionCanvas", () => {

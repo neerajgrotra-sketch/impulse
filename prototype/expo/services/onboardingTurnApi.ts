@@ -25,13 +25,28 @@ import type {
  * field on the response.
  */
 
-// Generous on purpose: inspiration_generation can internally retry the model
-// up to 3 times (identityEngine.ts's own MAX_ATTEMPTS) when the response
-// under-generates, plus the Safety Engine's own pre-call classification —
-// and a single one of those model calls alone has been observed taking
-// 30-40s. A 30s client timeout was found aborting (and discarding) requests
-// that the server went on to complete successfully seconds later.
-const REQUEST_TIMEOUT_MS = 120_000;
+// inspiration_generation was rebuilt (see identityEngine.ts) to one merged
+// model call with a layered timing budget, deliberately NOT three timers
+// racing to the same instant:
+//   provider call(s):    6.5s  (identityEngine.ts PROVIDER_BUDGET_MS)
+//   server total return: 8s    (identityEngine.ts SERVER_TOTAL_BUDGET_MS)
+//   this client timeout: 10s
+// The 2s margin over the server's own 8s target exists so the server can
+// finish classifying its own failure (timeout vs. malformed vs. refusal)
+// and return a structured 504/502 — which the UI can show a specific,
+// honest reason for — before the client gives up and reports a generic
+// "aborted" with no server-side explanation. Equal client/server timeouts
+// were tried first and rejected: the client would occasionally abort
+// (and discard the eventual response) milliseconds before the server's own
+// 504 would otherwise have arrived. This replaces the old, far more
+// generous 120s that let a request keep running long after the UI had
+// already moved to a failure state. onboarding_beat is unchanged and keeps
+// its own, separately generous budget below.
+const INSPIRATION_TIMEOUT_MS = 10_000;
+
+// onboarding_beat is out of scope for the inspiration-generation rebuild —
+// kept at its original, generous timeout.
+const ONBOARDING_BEAT_TIMEOUT_MS = 120_000;
 
 export type OnboardingTurnApiErrorKind = "config" | "network" | "timeout" | "aborted" | "server" | "invalid-response";
 
@@ -67,7 +82,11 @@ function isErrorPayload(value: unknown): value is { error: string } {
   return typeof value === "object" && value !== null && isNonEmptyString((value as Record<string, unknown>).error);
 }
 
-async function postOnboardingTurn(body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+async function postOnboardingTurn(
+  body: Record<string, unknown>,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<unknown> {
   const config = readConfig();
   if (!config) {
     throw new OnboardingTurnApiError(
@@ -81,7 +100,7 @@ async function postOnboardingTurn(body: Record<string, unknown>, signal?: AbortS
     if (signal.aborted) controller.abort();
     else signal.addEventListener("abort", () => controller.abort(), { once: true });
   }
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
   try {
@@ -97,7 +116,7 @@ async function postOnboardingTurn(body: Record<string, unknown>, signal?: AbortS
   } catch (err) {
     if (signal?.aborted) throw new OnboardingTurnApiError("aborted", "Request was cancelled.");
     if (controller.signal.aborted) {
-      throw new OnboardingTurnApiError("timeout", `The request took longer than ${REQUEST_TIMEOUT_MS / 1000}s.`);
+      throw new OnboardingTurnApiError("timeout", `The request took longer than ${timeoutMs / 1000}s.`);
     }
     throw new OnboardingTurnApiError("network", err instanceof Error ? err.message : "Network request failed.");
   } finally {
@@ -113,7 +132,11 @@ async function postOnboardingTurn(body: Record<string, unknown>, signal?: AbortS
 
   if (!response.ok) {
     const message = isErrorPayload(rawBody) ? rawBody.error : `Request failed with status ${response.status}.`;
-    throw new OnboardingTurnApiError("server", message);
+    // A 504 is the server's own honest "I hit my timeout budget" signal
+    // (identityEngine.ts's 8s budget) — surfaced as `kind: "timeout"` so
+    // callers show the same recovery UI as a client-side abort, not a
+    // generic "server error" message for what is, behaviorally, a timeout.
+    throw new OnboardingTurnApiError(response.status === 504 ? "timeout" : "server", message);
   }
 
   return rawBody;
@@ -123,7 +146,7 @@ function isValidSafetyTier(value: unknown): value is SafetyTier {
   return value === "none" || value === "low" || value === "elevated" || value === "crisis";
 }
 
-function parseHardStop(safety: Record<string, unknown>): HardStopResponse | null {
+function parseHardStop(body: Record<string, unknown>, safety: Record<string, unknown>): HardStopResponse | null {
   if (safety.hard_stop !== true) return null;
   if (!isNonEmptyString(safety.message)) {
     throw new OnboardingTurnApiError("invalid-response", "Hard-stop response is missing a message.");
@@ -132,7 +155,10 @@ function parseHardStop(safety: Record<string, unknown>): HardStopResponse | null
   if (tier !== "elevated" && tier !== "crisis") {
     throw new OnboardingTurnApiError("invalid-response", "Hard-stop response has an invalid tier.");
   }
-  return { safety: { tier, hardStop: true, message: safety.message } };
+  return {
+    safety: { tier, hardStop: true, message: safety.message },
+    requestId: isNonEmptyString(body.request_id) ? body.request_id : "",
+  };
 }
 
 function parseInspirationResponse(raw: unknown): InspirationResponse | HardStopResponse {
@@ -145,7 +171,7 @@ function parseInspirationResponse(raw: unknown): InspirationResponse | HardStopR
     throw new OnboardingTurnApiError("invalid-response", "Response is missing safety information.");
   }
 
-  const hardStop = parseHardStop(safety);
+  const hardStop = parseHardStop(body, safety);
   if (hardStop) return hardStop;
 
   if (!isValidSafetyTier(safety.tier)) {
@@ -159,8 +185,10 @@ function parseInspirationResponse(raw: unknown): InspirationResponse | HardStopR
     safety: { tier: safety.tier, hardStop: false },
     rankedDimensions: body.ranked_dimensions as RankedDimension[],
     thoughts: body.thoughts as GeneratedThought[],
+    requestId: String(body.request_id ?? ""),
     promptVersion: String(body.prompt_version ?? ""),
     latencyMs: Number(body.latency_ms ?? 0),
+    retryCount: Number(body.retry_count ?? 0),
   };
 }
 
@@ -189,7 +217,7 @@ function parseOnboardingBeatResponse(raw: unknown): OnboardingBeatResponse | Har
     throw new OnboardingTurnApiError("invalid-response", "Response is missing safety information.");
   }
 
-  const hardStop = parseHardStop(safety);
+  const hardStop = parseHardStop(body, safety);
   if (hardStop) return hardStop;
 
   if (!isValidSafetyTier(safety.tier)) {
@@ -235,6 +263,7 @@ export async function requestInspiration(
       first_name: input.firstName,
       becoming_response: input.becomingResponse,
     },
+    INSPIRATION_TIMEOUT_MS,
     options?.signal
   );
   return parseInspirationResponse(raw);
@@ -257,6 +286,7 @@ export async function requestCoachingBeat(
       ranked_dimensions: input.rankedDimensions,
       vision_canvas: input.visionCanvas.map((f) => ({ text: f.text })),
     },
+    ONBOARDING_BEAT_TIMEOUT_MS,
     options?.signal
   );
   return parseOnboardingBeatResponse(raw);

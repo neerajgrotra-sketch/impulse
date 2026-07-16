@@ -116,3 +116,44 @@ function shuffled<T>(items: T[]): T[] {
 export function createThoughtSequence(): Thought[] {
   return shuffled(thoughtLibrary);
 }
+
+const STOPWORDS = new Set([
+  "the", "a", "an", "to", "of", "and", "or", "in", "on", "at", "for", "with",
+  "i", "me", "my", "myself", "want", "wish", "be", "am", "is", "are", "become",
+  "becoming", "who", "that", "this", "it", "im", "so", "just", "really",
+]);
+
+function significantWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !STOPWORDS.has(w))
+  );
+}
+
+/**
+ * A deterministic, non-AI fallback for AE-001's FAILURE UX: when the
+ * 8-second inspiration-generation budget is exceeded, this offers
+ * "contextual temporary suggestions" scored against the person's own
+ * words rather than a random draw from the curated library — closer to
+ * relevant than nothing, while being honest that it is NOT AI output
+ * (callers must tag whatever this returns with `source: "fallback"`,
+ * never `"ai"`). Scoring is a plain word-overlap count — no network call,
+ * no latency cost, safe to call synchronously the instant the recovery
+ * state appears.
+ */
+export function pickContextualThoughts(query: string, count: number): Thought[] {
+  const queryWords = significantWords(query);
+  const scored = thoughtLibrary.map((thought) => {
+    const thoughtWords = significantWords(thought.text);
+    let overlap = 0;
+    for (const w of thoughtWords) if (queryWords.has(w)) overlap += 1;
+    return { thought, overlap };
+  });
+  scored.sort((a, b) => b.overlap - a.overlap);
+  const anyOverlap = scored.some((s) => s.overlap > 0);
+  const pool = anyOverlap ? scored : shuffled(scored);
+  return pool.slice(0, count).map((s) => s.thought);
+}

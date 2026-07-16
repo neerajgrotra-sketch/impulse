@@ -15,10 +15,21 @@ export type RankedDimension = {
   relevance: number;
 };
 
+/** Provenance of a thought's actual TEXT — distinct from `VisionFragment.origin`
+ *  (which records how it entered the Canvas). "ai" = the model generated it
+ *  this session, grounded in the person's own statement. "fallback" =
+ *  `pickContextualThoughts` (constants/thoughtLibrary.ts), offered only
+ *  after the 8-second generation budget was exceeded — must never be
+ *  presented as AI output. "user" = typed or spoken by the person directly.
+ *  The whole point of this field: the UI can always answer "did the AI
+ *  actually say this?" truthfully. */
+export type ThoughtSource = "ai" | "fallback" | "user";
+
 export type GeneratedThought = {
   id: string;
   dimension: LifeDimension;
   text: string;
+  source: ThoughtSource;
 };
 
 /**
@@ -35,6 +46,10 @@ export type VisionFragment = {
    * its original generated wording — feeds the "accepted AI wording vs.
    * manual edits" telemetry signal without storing what changed. */
   edited: boolean;
+  /** See `ThoughtSource` — carried onto the fragment so a fallback-derived
+   *  or user-authored entry can still be told apart from real AI output
+   *  anywhere downstream (Vision Canvas display, telemetry, debug overlay). */
+  source: ThoughtSource;
 };
 
 export type PsychologicalState = {
@@ -47,8 +62,10 @@ export type InspirationResponse = {
   safety: { tier: SafetyTier; hardStop: false };
   rankedDimensions: RankedDimension[];
   thoughts: GeneratedThought[];
+  requestId: string;
   promptVersion: string;
   latencyMs: number;
+  retryCount: number;
 };
 
 export type OnboardingBeatResponse = {
@@ -66,6 +83,7 @@ export type OnboardingBeatResponse = {
 
 export type HardStopResponse = {
   safety: { tier: "elevated" | "crisis"; hardStop: true; message: string };
+  requestId: string;
 };
 
 /**

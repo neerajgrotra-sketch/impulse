@@ -55,6 +55,8 @@ export function DebugOverlay() {
             {debug.lastLatencyMs !== null ? `LLM: ${debug.lastLatencyMs}ms` : "—"}
           </Section>
 
+          <Section title="Request ID">{debug.lastRequestId ?? "—"}</Section>
+
           <Section title="Current Psychological State">
             {psychologicalState ? (
               <>

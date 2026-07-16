@@ -32,15 +32,40 @@ describe("useAdaptiveCoachingStore", () => {
       useAdaptiveCoachingStore.getState().inspirationReceived(
         {
           rankedDimensions: [{ dimension: "Health & Energy", relevance: 0.9 }],
-          thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger" }],
+          thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger", source: "ai" }],
         },
-        { lastSafetyTier: "none", lastLatencyMs: 800, lastRawPayload: {} }
+        { lastSafetyTier: "none", lastLatencyMs: 800, lastRawPayload: {}, lastRequestId: "req-1" }
       );
     });
     const state = useAdaptiveCoachingStore.getState();
     expect(state.phase).toEqual({ status: "inspiration-vision" });
     expect(state.rankedDimensions).toHaveLength(1);
     expect(state.thoughtPool).toHaveLength(1);
+  });
+
+  it("moreThoughtsReceived replaces the pool without changing phase ('reviewing' stays 'reviewing')", () => {
+    act(() => {
+      useAdaptiveCoachingStore.getState().inspirationReceived(
+        {
+          rankedDimensions: [{ dimension: "Health & Energy", relevance: 0.9 }],
+          thoughts: [{ id: "t1", dimension: "Health & Energy", text: "original thought", source: "ai" }],
+        },
+        { lastSafetyTier: "none", lastLatencyMs: 800, lastRawPayload: {}, lastRequestId: "req-1" }
+      );
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "picked one", origin: "thought_tap", edited: false, source: "ai" });
+    });
+    expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "reviewing" });
+
+    act(() => {
+      useAdaptiveCoachingStore.getState().moreThoughtsReceived({
+        rankedDimensions: [{ dimension: "Relationships", relevance: 0.7 }],
+        thoughts: [{ id: "t2", dimension: "Relationships", text: "a fresh thought", source: "ai" }],
+      });
+    });
+    const state = useAdaptiveCoachingStore.getState();
+    expect(state.phase).toEqual({ status: "reviewing" });
+    expect(state.thoughtPool).toEqual([{ id: "t2", dimension: "Relationships", text: "a fresh thought", source: "ai" }]);
+    expect(state.visionCanvas).toHaveLength(1);
   });
 
   it("inspirationHardStopped routes to safety-hand-off with the given message", () => {
@@ -55,7 +80,7 @@ describe("useAdaptiveCoachingStore", () => {
 
   it("addVisionFragment appends a fragment and moves to reviewing", () => {
     act(() => {
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "Someone who follows through", origin: "thought_tap", edited: false });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "Someone who follows through", origin: "thought_tap", edited: false, source: "user" });
     });
     const state = useAdaptiveCoachingStore.getState();
     expect(state.visionCanvas).toHaveLength(1);
@@ -66,7 +91,7 @@ describe("useAdaptiveCoachingStore", () => {
   it("never exceeds MAX_VISION_FRAGMENTS", () => {
     act(() => {
       for (let i = 0; i < MAX_VISION_FRAGMENTS + 3; i++) {
-        useAdaptiveCoachingStore.getState().addVisionFragment({ text: `fragment ${i}`, origin: "typed", edited: false });
+        useAdaptiveCoachingStore.getState().addVisionFragment({ text: `fragment ${i}`, origin: "typed", edited: false, source: "user" });
       }
     });
     expect(useAdaptiveCoachingStore.getState().visionCanvas).toHaveLength(MAX_VISION_FRAGMENTS);
@@ -74,7 +99,7 @@ describe("useAdaptiveCoachingStore", () => {
 
   it("editVisionFragment updates text and marks edited", () => {
     act(() => {
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "original", origin: "thought_tap", edited: false });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "original", origin: "thought_tap", edited: false, source: "user" });
     });
     const id = useAdaptiveCoachingStore.getState().visionCanvas[0].id;
     act(() => {
@@ -87,8 +112,8 @@ describe("useAdaptiveCoachingStore", () => {
 
   it("removeVisionFragment removes exactly the targeted fragment", () => {
     act(() => {
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "keep", origin: "typed", edited: false });
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "remove", origin: "typed", edited: false });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "keep", origin: "typed", edited: false, source: "user" });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "remove", origin: "typed", edited: false, source: "user" });
     });
     const [, toRemove] = useAdaptiveCoachingStore.getState().visionCanvas;
     act(() => {
@@ -101,9 +126,9 @@ describe("useAdaptiveCoachingStore", () => {
 
   it("reorderVisionFragments moves a fragment to the target index", () => {
     act(() => {
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "a", origin: "typed", edited: false });
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "b", origin: "typed", edited: false });
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "c", origin: "typed", edited: false });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "a", origin: "typed", edited: false, source: "user" });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "b", origin: "typed", edited: false, source: "user" });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "c", origin: "typed", edited: false, source: "user" });
     });
     act(() => {
       useAdaptiveCoachingStore.getState().reorderVisionFragments(2, 0);
@@ -113,7 +138,7 @@ describe("useAdaptiveCoachingStore", () => {
 
   it("reorderVisionFragments is a no-op for an out-of-bounds index", () => {
     act(() => {
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "a", origin: "typed", edited: false });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "a", origin: "typed", edited: false, source: "user" });
     });
     act(() => {
       useAdaptiveCoachingStore.getState().reorderVisionFragments(0, 5);
@@ -135,7 +160,7 @@ describe("useAdaptiveCoachingStore", () => {
           message: "What does that look like day to day?",
           psychologicalState: { observed: [], inferred: [], unknown: [] },
         },
-        { lastSafetyTier: "none", lastLatencyMs: 900, lastRawPayload: {} }
+        { lastSafetyTier: "none", lastLatencyMs: 900, lastRawPayload: {}, lastRequestId: null }
       );
     });
     const state = useAdaptiveCoachingStore.getState();
@@ -160,7 +185,7 @@ describe("useAdaptiveCoachingStore", () => {
   it("reset returns to the initial state", () => {
     act(() => {
       useAdaptiveCoachingStore.getState().setFirstName("Maya");
-      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "x", origin: "typed", edited: false });
+      useAdaptiveCoachingStore.getState().addVisionFragment({ text: "x", origin: "typed", edited: false, source: "user" });
       useAdaptiveCoachingStore.getState().reset();
     });
     const state = useAdaptiveCoachingStore.getState();

@@ -79,7 +79,7 @@ describe("AdaptiveCoachingCoordinator", () => {
         message: "It sounds like presence matters a lot to you.",
         psychologicalState: { observed: [], inferred: [], unknown: [] },
       },
-      { lastSafetyTier: "none", lastLatencyMs: 500, lastRawPayload: {} }
+      { lastSafetyTier: "none", lastLatencyMs: 500, lastRawPayload: {}, lastRequestId: "req-1" }
     );
     const { getByText, queryByLabelText } = await renderCoordinator();
     expect(getByText("It sounds like presence matters a lot to you.")).toBeTruthy();
@@ -87,7 +87,7 @@ describe("AdaptiveCoachingCoordinator", () => {
   });
 
   it("the failed phase offers a 'Start over' control that resets the store", async () => {
-    useAdaptiveCoachingStore.getState().inspirationFailed("I'm having a little trouble right now.");
+    useAdaptiveCoachingStore.getState().beatFailed("I'm having a little trouble right now.");
     const { getByLabelText } = await renderCoordinator();
     await fireEvent.press(getByLabelText("Start over"));
     expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "name" });

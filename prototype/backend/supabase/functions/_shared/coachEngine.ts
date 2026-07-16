@@ -81,12 +81,15 @@ function extractJSONText(content: { type: string; text?: string }[]): string | n
   return block?.text ?? null;
 }
 
+// Same reasoning as identityEngine.ts's callModel: Sonnet 5 scopes down at
+// "medium" or lower, and this call's psychological_state/message output
+// deserves the model's actual default effort, not one step under it.
 async function callModel(userMessage: string, system: string) {
   return await anthropic.messages.create({
     model: MODEL.dialogue,
     max_tokens: 2048,
     output_config: {
-      effort: "medium",
+      effort: "high",
       format: { type: "json_schema", schema: ONBOARDING_BEAT_SCHEMA },
     },
     system,

@@ -27,6 +27,9 @@ type DebugSnapshot = {
   lastSafetyTier: SafetyTier | null;
   lastLatencyMs: number | null;
   lastRawPayload: unknown;
+  /** OBSERVABILITY: "show the request ID in development builds" — surfaced
+   *  via DebugOverlay, which is itself already __DEV__-and-env-flag-gated. */
+  lastRequestId: string | null;
 };
 
 type AdaptiveCoachingState = {
@@ -52,8 +55,13 @@ type AdaptiveCoachingState = {
    *  generating-inspiration pass overwrites them regardless. */
   goBackToMomentOne: () => void;
   inspirationReceived: (result: { rankedDimensions: RankedDimension[]; thoughts: GeneratedThought[] }, debug: DebugSnapshot) => void;
+  /** "More like this" (VisionCanvasScreen) — a fresh batch replacing the
+   *  offered pool, without touching `phase` (the user may already be
+   *  reviewing selected fragments; regenerating suggestions doesn't undo
+   *  that). Kept distinct from `inspirationReceived`, which also advances
+   *  the phase machine past its initial "generating-inspiration" step. */
+  moreThoughtsReceived: (result: { rankedDimensions: RankedDimension[]; thoughts: GeneratedThought[] }) => void;
   inspirationHardStopped: (message: string) => void;
-  inspirationFailed: (message: string) => void;
 
   addVisionFragment: (fragment: Omit<VisionFragment, "id">) => void;
   editVisionFragment: (id: string, text: string) => void;
@@ -80,7 +88,7 @@ const initialState = {
   visionCanvas: [] as VisionFragment[],
   psychologicalState: null as PsychologicalState | null,
   isSubmitting: false,
-  debug: { lastSafetyTier: null, lastLatencyMs: null, lastRawPayload: null } as DebugSnapshot,
+  debug: { lastSafetyTier: null, lastLatencyMs: null, lastRawPayload: null, lastRequestId: null } as DebugSnapshot,
 };
 
 let fragmentIdCounter = 0;
@@ -109,9 +117,13 @@ export const useAdaptiveCoachingStore = create<AdaptiveCoachingState>((set, get)
       debug,
     }),
 
-  inspirationHardStopped: (message) => set({ phase: { status: "safety-hand-off", message } }),
+  moreThoughtsReceived: (result) =>
+    set({
+      rankedDimensions: result.rankedDimensions,
+      thoughtPool: result.thoughts,
+    }),
 
-  inspirationFailed: (message) => set({ phase: { status: "failed", message } }),
+  inspirationHardStopped: (message) => set({ phase: { status: "safety-hand-off", message } }),
 
   addVisionFragment: (fragment) => {
     const { visionCanvas } = get();
