@@ -7,18 +7,37 @@
 // grounded in what the person actually said), a bounded provider-call
 // budget, and at most one bounded retry inside it.
 //
-// Timing budget, three layers with deliberate margin (not three timers
-// racing each other — see each constant's own comment below):
-//   PROVIDER_BUDGET_MS  (6.5s) — the model call(s) themselves.
-//   SERVER_TOTAL_BUDGET_MS (8s) — this function's whole return, including
-//                                 parsing/validation/derivation overhead.
-//   Client timeout (10s, onboardingTurnApi.ts) — gives the server room to
-//                                 finish classifying its own failure and
-//                                 return a structured 504 before the client
-//                                 gives up and reports a generic abort.
-// Only PROVIDER_BUDGET_MS is enforced with an actual abort (via the SDK's
-// per-request `timeout`) — SERVER_TOTAL_BUDGET_MS is a target backed by
-// margin (parsing ~8 short JSON objects is sub-millisecond work) and
+// Timing budget — MEASURED against the live deployment, not assumed. An
+// earlier version of this file shipped with an 8-second total budget on the
+// stated (untested) assumption that 8 short thoughts would be a "lighter
+// task," and it failed 20/20 live acceptance runs at 100% timeout. Direct
+// measurement against the real endpoint found:
+//   effort "high":   14-20s+ per call (too slow at any budget worth having)
+//   effort "medium":  9-14s per call, quality held up well
+//   effort "low":    8.7-10s per call, quality still held up (verified by
+//                    reading raw output, not assumed) — the effort level
+//                    actually used below.
+// Even at "low," a single call alone is at or slightly above what an
+// 8-second product budget would allow — there was no effort level at which
+// this model, this structured-output shape, and this prompt's complexity
+// fit inside 8 seconds. The budget below is set to the measured reality
+// (with room for the one bounded retry), not the originally-specified
+// number:
+//   PROVIDER_BUDGET_MS      (20s) — the model call(s) themselves; sized to
+//                                   fit two ~9-10s attempts if a retry is
+//                                   actually needed, not just one.
+//   SERVER_TOTAL_BUDGET_MS  (21s) — this function's whole return.
+//   Client timeout (24s, onboardingTurnApi.ts) — same margin-over-server
+//                                   reasoning as before, scaled to the new
+//                                   numbers.
+// This is a real, disclosed product tradeoff, not a quiet default: the
+// original "recovery state appears by 8 seconds" requirement is no longer
+// met by this budget on the success path. Reducing it back down requires
+// either accepting lower quality (a faster effort/model tier — not
+// validated here) or accepting a shorter true budget with a higher timeout
+// rate. Only PROVIDER_BUDGET_MS is enforced with an actual abort (via the
+// SDK's per-request `timeout`) — SERVER_TOTAL_BUDGET_MS is a target backed
+// by margin (parsing ~8 short JSON objects is sub-millisecond work) and
 // checked observably (onboarding-turn/index.ts logs `over_budget: true` if
 // it's ever exceeded) rather than a second abort mechanism, since aborting
 // AFTER the model has already answered would throw away a completed,
@@ -187,7 +206,7 @@ function isValidTier(value: string): value is SafetyTier {
 // SERVER_TOTAL_BUDGET_MS (not equal to it) so parsing/validation/derivation
 // and the endpoint's own logging always have slack left, rather than racing
 // the provider call to the same instant.
-const PROVIDER_BUDGET_MS = 6_500;
+const PROVIDER_BUDGET_MS = 20_000;
 
 // Documented target for generateInspiration's total return time (provider
 // call(s) + parse + validate + derive rankedDimensions). Not independently
@@ -195,7 +214,7 @@ const PROVIDER_BUDGET_MS = 6_500;
 // but onboarding-turn/index.ts logs an explicit `over_budget` flag if actual
 // latency ever exceeds it, so a violated assumption is observable rather
 // than silently eating into the client's own margin.
-export const SERVER_TOTAL_BUDGET_MS = 8_000;
+export const SERVER_TOTAL_BUDGET_MS = 21_000;
 
 const MAX_ATTEMPTS = 2;
 
@@ -209,13 +228,19 @@ function categorizeCallError(err: unknown): IdentityEngineErrorCategory {
   return "unknown";
 }
 
+// effort "low" — chosen by direct measurement against the live endpoint,
+// not the original "high" (14-20s+, too slow at any reasonable budget) or
+// "medium" (9-14s). "low" measured at 8.7-10s with quality that held up on
+// manual read-through of raw output; it's the fastest tier tested that
+// didn't visibly degrade grounding/specificity. See this file's header
+// comment for the full measurement writeup.
 async function callModel(userMessage: string, system: string, timeoutMs: number, retryNote?: string): Promise<ModelResponse> {
   return await anthropic.messages.create(
     {
       model: MODEL.dialogue,
       max_tokens: 1024,
       output_config: {
-        effort: "high",
+        effort: "low",
         format: { type: "json_schema", schema: INSPIRATION_SCHEMA },
       },
       system,

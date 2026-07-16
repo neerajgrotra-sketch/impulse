@@ -28,21 +28,26 @@ import type {
 // inspiration_generation was rebuilt (see identityEngine.ts) to one merged
 // model call with a layered timing budget, deliberately NOT three timers
 // racing to the same instant:
-//   provider call(s):    6.5s  (identityEngine.ts PROVIDER_BUDGET_MS)
-//   server total return: 8s    (identityEngine.ts SERVER_TOTAL_BUDGET_MS)
-//   this client timeout: 10s
-// The 2s margin over the server's own 8s target exists so the server can
-// finish classifying its own failure (timeout vs. malformed vs. refusal)
-// and return a structured 504/502 — which the UI can show a specific,
-// honest reason for — before the client gives up and reports a generic
-// "aborted" with no server-side explanation. Equal client/server timeouts
-// were tried first and rejected: the client would occasionally abort
-// (and discard the eventual response) milliseconds before the server's own
-// 504 would otherwise have arrived. This replaces the old, far more
-// generous 120s that let a request keep running long after the UI had
-// already moved to a failure state. onboarding_beat is unchanged and keeps
-// its own, separately generous budget below.
-const INSPIRATION_TIMEOUT_MS = 10_000;
+//   provider call(s):    20s  (identityEngine.ts PROVIDER_BUDGET_MS)
+//   server total return: 21s  (identityEngine.ts SERVER_TOTAL_BUDGET_MS)
+//   this client timeout: 24s
+// These numbers were originally specified as an 8s/8s/10s budget on the
+// stated assumption that 8 short thoughts would be a "lighter" generation
+// task. That assumption was tested against the live endpoint (20 real
+// requests) and found wrong: effort "high" measured 14-20s+ per call,
+// "medium" 9-14s, and even "low" (what identityEngine.ts actually uses)
+// measured 8.7-10s for a single attempt — already at or above an 8-second
+// total budget before any retry. The budget here is set to the measured
+// reality, not the original target; see identityEngine.ts's header comment
+// for the full writeup and the disclosed product-level consequence (the
+// "recovery state by 8 seconds" requirement is no longer met on the
+// success path at this budget). The 3s margin over the server's own 21s
+// target exists for the same reason the original 2s margin did: so the
+// server can finish classifying its own failure and return a structured
+// 504/502 before the client gives up and reports a generic "aborted" with
+// no server-side explanation. onboarding_beat is unchanged and keeps its
+// own, separately generous budget below.
+const INSPIRATION_TIMEOUT_MS = 24_000;
 
 // onboarding_beat is out of scope for the inspiration-generation rebuild —
 // kept at its original, generous timeout.

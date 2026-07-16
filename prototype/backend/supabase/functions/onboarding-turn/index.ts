@@ -117,7 +117,7 @@ function isValidOnboardingBeatRequest(body: unknown): body is OnboardingBeatRequ
 }
 
 /** IdentityEngineError's category maps to an honest HTTP status: a real
- *  8-second-budget timeout is 504 (the client's own 8s timer will usually
+ *  provider-budget timeout is 504 (the client's own timer will usually
  *  fire first anyway, but a slightly-slower client or a retry-after-abort
  *  race should still see the true reason), everything else is 502. */
 function statusForErrorCategory(category: string): number {
