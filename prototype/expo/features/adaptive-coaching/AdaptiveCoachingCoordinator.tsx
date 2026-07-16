@@ -6,6 +6,7 @@ import { useVoiceCapture } from "@/hooks/useVoiceCapture";
 import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
 import { colors, spacing, typography } from "@/theme";
 import type { AdaptivePhase } from "@/types/adaptiveCoaching";
+import { BuildBadge } from "./components/BuildBadge";
 import { DebugOverlay } from "./components/DebugOverlay";
 import { CoachingBeatScreen } from "./screens/CoachingBeatScreen";
 import { MomentOneScreen } from "./screens/MomentOneScreen";
@@ -42,6 +43,7 @@ export function AdaptiveCoachingCoordinator() {
         {renderPhase()}
       </Animated.View>
       <DebugOverlay />
+      <BuildBadge />
     </View>
   );
 
