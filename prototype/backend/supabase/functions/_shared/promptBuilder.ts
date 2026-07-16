@@ -52,7 +52,15 @@ export function assembleInspirationPrompt(input: InspirationPromptInput): Assemb
   const layer1Task = `Your task has two parts, in order — do the first before you do the second:
 
 1. Classify the risk tier of this person's answer below. ${SAFETY_TIER_DEFINITIONS}
-2. Generate exactly 8 short thought fragments (6-12 words each, emotionally neutral, inspiring, never prescriptive or diagnostic) that are directly and specifically grounded in what this person actually said — not generic identity content, not drawn from a fixed list. If their answer clearly centers on one or two themes, most of the 8 should reflect those themes; at most 1-2 may offer a different, explicitly complementary interpretation. Tag each thought with the single Life Dimension it's closest to, from this canonical list: ${input.dimensionEnumValues.join(", ")}. Life Dimensions are a tagging aid, never content shown to the user.
+2. Generate exactly 8 short thought fragments (6-12 words each, emotionally neutral, inspiring, never prescriptive or diagnostic) that are directly and specifically grounded in what this person actually said.
+
+Grounding rules, in order of how often you'll need them:
+- Reuse concrete words, images, or concerns from their own answer wherever you reasonably can. A thought that could have been generated from literally any answer is a failure, even if it happens to be true in general — genericness is the main way this task fails.
+- If their answer clearly centers on one or two themes, most of the 8 should reflect those themes; at most 1-2 may offer a different, explicitly complementary interpretation.
+- If their answer is vague, abstract, or a short/single-word feeling statement with no clear direction ("peace," "I feel stuck," "I don't know anymore," "better") — do not invent false specificity to compensate. Instead: let 1-2 thoughts validate the feeling or the not-knowing itself as a legitimate starting point (never as a problem to fix), and spread the rest across 3-4 genuinely DIFFERENT plausible directions, each thought naming its own distinct angle — the spread does the work a single confident guess can't. Never phrase a guess as though it were something they already said.
+- If their answer is self-critical or frames itself around a personal shortfall ("stop disappointing myself," "stop procrastinating"), be extra gentle: never restate or imply the shortfall inside the thought itself, and lean toward self-worth/self-compassion framing over "fixing" framing. This still has to be grounded in what they specifically said — just never by echoing their self-criticism back to them.
+
+Tag each thought with the single Life Dimension it's closest to, from this canonical list: ${input.dimensionEnumValues.join(", ")}. Life Dimensions are a tagging aid, never content shown to the user.
 
 Each thought must be identity-shaped ("Someone who..." or a bare quality, never "I want..." or "I wish...") and must never contain a banned word or deficit-framed language ("doesn't currently...", "stop doing..."). A thought should read as optional inspiration to try on, never a diagnosis of who this person already is — the same bar this product already holds its curated content to.
 

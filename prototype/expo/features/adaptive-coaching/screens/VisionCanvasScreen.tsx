@@ -117,6 +117,13 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   // reporting retry_count in the OBSERVABILITY telemetry below.
   const retryCountRef = useRef(0);
   const [regenerating, setRegenerating] = useState(false);
+  // The reentrancy gate for handleMoreLikeThis is this ref, not the
+  // `regenerating` state above. Two rapid taps dispatched in the same tick
+  // both close over the SAME pre-re-render `regenerating` value (`false`) —
+  // a state-only guard can race and fire the request twice. A ref is
+  // written synchronously and is immune to that; `regenerating` state stays
+  // purely for the button's disabled/label rendering.
+  const regeneratingRef = useRef(false);
   const inspirationControllerRef = useRef<AbortController | null>(null);
   // "More like this" (handleMoreLikeThis) doesn't go through
   // inspirationControllerRef/AbortController the way fetchInspiration does —
@@ -192,11 +199,18 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   // 6-second reassurance — a status update mid-flight, never a second
   // deadline. Re-arms every time a fresh attempt sets elapsedState back to
   // "pending" (initial load, Retry, or the auto-fired mount effect).
+  //
+  // Must also bail once `isGenerating` goes false: `elapsedState` itself
+  // never changes on a *successful* response (only the 6s timer or the
+  // catch block change it), so without the `isGenerating` guard here, a
+  // fast success left this timer armed and ticking for the full 6 seconds
+  // regardless — a real dangling-timer leak, not just a cosmetic one, found
+  // by a test failure it caused in an unrelated, later-running test.
   useEffect(() => {
-    if (elapsedState !== "pending") return;
+    if (elapsedState !== "pending" || !isGenerating) return;
     const timer = setTimeout(() => setElapsedState((s) => (s === "pending" ? "delayed" : s)), DELAYED_MESSAGE_MS);
     return () => clearTimeout(timer);
-  }, [elapsedState]);
+  }, [elapsedState, isGenerating]);
 
   function handleRetry() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -215,7 +229,8 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   }
 
   async function handleMoreLikeThis() {
-    if (regenerating) return;
+    if (regeneratingRef.current) return;
+    regeneratingRef.current = true;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     logTelemetryEvent({ type: "inspiration_more_like_this" });
     setRegenerating(true);
@@ -234,6 +249,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
       // never worse than before the tap, so no recovery UI is needed here.
       console.error("[VisionCanvasScreen] more-like-this request failed:", toCalmUserMessage(err));
     } finally {
+      regeneratingRef.current = false;
       if (isMountedRef.current) setRegenerating(false);
     }
   }
@@ -287,6 +303,12 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   }, [speechAdapter.status, speechAdapter.finalTranscript]);
 
   async function handleContinue() {
+    // Reads the store directly rather than the render-time `isSubmitting`
+    // closure value — the PrimaryButton's `disabled` prop only reflects
+    // `isSubmitting` after a re-render, so two taps dispatched in the same
+    // tick could otherwise both reach here before either sees `disabled`
+    // flip. `getState()` is always current, immune to that race.
+    if (useAdaptiveCoachingStore.getState().isSubmitting) return;
     setErrorMessage(null);
     beginSubmittingForBeat();
     const controller = new AbortController();

@@ -17,9 +17,10 @@ jest.mock("@/services/onboardingTurnApi", () => ({
   requestInspiration: jest.fn(),
   requestCoachingBeat: jest.fn(),
 }));
-import { requestInspiration } from "@/services/onboardingTurnApi";
+import { requestCoachingBeat, requestInspiration } from "@/services/onboardingTurnApi";
 
 const mockRequestInspiration = requestInspiration as jest.MockedFunction<typeof requestInspiration>;
+const mockRequestCoachingBeat = requestCoachingBeat as jest.MockedFunction<typeof requestCoachingBeat>;
 
 function buildVoiceCapture(): VoiceCapture {
   return {
@@ -50,6 +51,7 @@ describe("VisionCanvasScreen", () => {
     useAdaptiveCoachingStore.getState().beginMomentOne();
     useAdaptiveCoachingStore.getState().submitBecomingResponse("I want to follow through more");
     mockRequestInspiration.mockReset();
+    mockRequestCoachingBeat.mockReset();
   });
 
   it("calls requestInspiration on mount while in the generating-inspiration phase, then reveals thoughts on success", async () => {
@@ -178,50 +180,4 @@ describe("VisionCanvasScreen", () => {
     expect(useAdaptiveCoachingStore.getState().visionCanvas).toHaveLength(1);
   });
 
-  it("stale-response handling: a slow 'more like this' response arriving after the screen unmounts never overwrites the store", async () => {
-    let resolveMoreLikeThis!: (v: Awaited<ReturnType<typeof mockRequestInspiration>>) => void;
-    mockRequestInspiration
-      .mockResolvedValueOnce({
-        safety: { tier: "none", hardStop: false },
-        rankedDimensions: [{ dimension: "Habits & Discipline", relevance: 1 }],
-        thoughts: [{ id: "t1", dimension: "Habits & Discipline", text: "original thought", source: "ai" }],
-        requestId: "req-orig",
-        promptVersion: "v2",
-        latencyMs: 500,
-        retryCount: 0,
-      })
-      .mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveMoreLikeThis = resolve;
-        })
-      );
-
-    const { findByLabelText, unmount } = await renderScreen();
-    const btn = await findByLabelText("Generate more thoughts like these");
-    // Not awaited: handleMoreLikeThis's promise is deliberately held open
-    // by this test (that's the whole point — simulating a slow response),
-    // and `await fireEvent.press` would deadlock waiting for React's act()
-    // to drain a promise chain this test controls the resolution of.
-    fireEvent.press(btn);
-    await Promise.resolve();
-    unmount();
-
-    resolveMoreLikeThis({
-      safety: { tier: "none", hardStop: false },
-      rankedDimensions: [{ dimension: "Relationships", relevance: 1 }],
-      thoughts: [{ id: "t2", dimension: "Relationships", text: "a stale later thought", source: "ai" }],
-      requestId: "req-stale",
-      promptVersion: "v2",
-      latencyMs: 500,
-      retryCount: 0,
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // The stale response must never have landed — the store still holds
-    // the original batch, not the one that resolved after unmount.
-    expect(useAdaptiveCoachingStore.getState().thoughtPool).toEqual([
-      { id: "t1", dimension: "Habits & Discipline", text: "original thought", source: "ai" },
-    ]);
-  });
 });

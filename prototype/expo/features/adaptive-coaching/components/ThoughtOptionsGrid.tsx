@@ -135,11 +135,23 @@ function ThoughtChip({
 function SkeletonBubble({ index, reduceMotion }: { index: number; reduceMotion: boolean }) {
   const opacity = useSharedValue(0.35);
 
-  if (!reduceMotion) {
+  // Started once per mount, not on every render — this screen re-renders
+  // the whole loading grid at the 6-second "still working" mark
+  // (VisionCanvasScreen's elapsedState transition). Assigning `opacity.value
+  // = withRepeat(...)` directly in the render body (the previous version of
+  // this component) restarted the shimmer from scratch on that exact
+  // transition — a visible stutter at the one moment the user is most
+  // likely to be watching for a sign of life.
+  useEffect(() => {
+    if (reduceMotion) {
+      opacity.value = 0.5;
+      return;
+    }
     opacity.value = withRepeat(withTiming(0.7, { duration: 700 }), -1, true);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reduceMotion]);
 
-  const animatedStyle = useAnimatedStyle(() => ({ opacity: reduceMotion ? 0.5 : opacity.value }));
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
   // Varies width slightly so the placeholder grid doesn't read as a rigid
   // table — a plain, honest "still working" shimmer, not a fake preview of
   // real content.

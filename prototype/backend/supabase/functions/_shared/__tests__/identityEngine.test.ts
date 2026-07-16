@@ -242,3 +242,67 @@ Deno.test("generateInspiration never returns a hard-stop tier silently as 'safe'
   // share of that guarantee.
   assertEquals(result.thoughts.length, 8);
 });
+
+// --- Defensive guards against a schema-violating response: `output_config`
+// is supposed to guarantee shape, but this module must not simply trust
+// that — an uncaught TypeError from a missing/malformed field would skip
+// the retry entirely (it unwinds past the whole attempt loop) rather than
+// being treated as a normal, retried validation failure. ---
+
+Deno.test("generateInspiration retries (never crashes) when thoughts is missing from an otherwise-valid response", async () => {
+  const missingThoughts: ModelResponse = {
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: JSON.stringify({ safety: { tier: "none", rationale_code: "test" } }) }],
+  };
+  try {
+    await generateInspiration(VALID_INPUT, sequence(missingThoughts, missingThoughts));
+    throw new Error("expected generateInspiration to throw");
+  } catch (err) {
+    if (!(err instanceof IdentityEngineError)) throw err;
+    assertEquals(err.category, "incomplete_or_invalid");
+  }
+});
+
+Deno.test("generateInspiration retries (never crashes) when thoughts is present but not an array", async () => {
+  const notAnArray: ModelResponse = {
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: JSON.stringify({ safety: { tier: "none", rationale_code: "test" }, thoughts: "not an array" }) }],
+  };
+  try {
+    await generateInspiration(VALID_INPUT, sequence(notAnArray, notAnArray));
+    throw new Error("expected generateInspiration to throw");
+  } catch (err) {
+    if (!(err instanceof IdentityEngineError)) throw err;
+    assertEquals(err.category, "incomplete_or_invalid");
+  }
+});
+
+Deno.test("generateInspiration recovers when the first attempt is missing thoughts and the retry is valid", async () => {
+  const missingThoughts: ModelResponse = {
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: JSON.stringify({ safety: { tier: "none", rationale_code: "test" } }) }],
+  };
+  const result = await generateInspiration(VALID_INPUT, sequence(missingThoughts, validResponse()));
+  assertEquals(result.thoughts.length, 8);
+});
+
+Deno.test("findThoughtSetViolation flags a non-string text field instead of throwing", () => {
+  const violation = findThoughtSetViolation({
+    thoughts: [
+      ...thoughts(7),
+      { text: undefined as unknown as string },
+    ],
+  });
+  assertMatch(violation ?? "", /not a string/);
+});
+
+Deno.test("each generated thought gets a unique id, even across two calls (no positional collision for 'more like this')", async () => {
+  const first = await generateInspiration(VALID_INPUT, sequence(validResponse()));
+  const second = await generateInspiration(VALID_INPUT, sequence(validResponse()));
+  const firstIds = new Set(first.thoughts.map((t) => t.id));
+  const secondIds = new Set(second.thoughts.map((t) => t.id));
+  assertEquals(firstIds.size, 8, "no duplicate ids within one batch");
+  for (const id of secondIds) {
+    assertEquals(firstIds.has(id), false, "a fresh batch must never reuse a previous batch's id");
+  }
+});

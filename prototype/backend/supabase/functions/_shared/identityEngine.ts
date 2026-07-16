@@ -144,6 +144,12 @@ function extractJSONText(content: { type: string; text?: string }[]): string | n
  *  was once "reviewed once, on a fixed 29-entry file" now has to hold across
  *  unbounded generated content instead (decisions/0012's own named risk). */
 function lintThought(text: string): string | null {
+  // `text` is typed `string` (matches RawInspirationResponse's declared
+  // shape), but that type is not actually enforced at runtime — it comes
+  // straight out of JSON.parse on model output. A non-string here (missing
+  // field, wrong type from a schema-violating response) must fail the lint,
+  // not throw out of `findBannedWord`'s `.toLowerCase()` call uncaught.
+  if (typeof text !== "string") return "thought text is missing or not a string";
   const bannedHit = findBannedWord(text);
   if (bannedHit) return `banned word "${bannedHit}"`;
   if (/^i (want|wish)\b/i.test(text.trim())) return "goal/wish-phrased, not identity-shaped";
@@ -310,6 +316,21 @@ export async function generateInspiration(
       continue;
     }
 
+    // Defense-in-depth against a schema-violating response: `output_config`
+    // is supposed to guarantee shape, but this code must not simply trust
+    // that and crash uncaught if it's ever wrong — an uncaught TypeError
+    // here would skip the retry entirely (it unwinds past this whole loop,
+    // not just this attempt) and reach onboarding-turn/index.ts as an
+    // unrelated "unknown"-category error instead of the well-categorized,
+    // retried `incomplete_or_invalid` this deserves.
+    if (!Array.isArray(attemptParsed.thoughts)) {
+      violation = "thoughts is missing or not an array";
+      if (attempts === MAX_ATTEMPTS) {
+        throw new IdentityEngineError("incomplete_or_invalid", `inspiration content failed validation after ${MAX_ATTEMPTS} attempts: ${violation}`);
+      }
+      continue;
+    }
+
     violation = findThoughtSetViolation(attemptParsed);
     if (!violation) {
       parsed = attemptParsed;
@@ -329,9 +350,17 @@ export async function generateInspiration(
   if (!parsed) throw new IdentityEngineError("unknown", "inspiration generation produced no result");
 
   const parseStartedAt = Date.now();
+  // crypto.randomUUID(), not a positional `t${i+1}` — the frontend's "more
+  // like this" (VisionCanvasScreen.tsx) replaces the whole thought pool with
+  // a fresh call to this same function, and a positional scheme would hand
+  // back the identical IDs ("t1".."t8") every time. React's `key`-based
+  // reconciliation (ThoughtOptionsGrid) would then treat the new batch as
+  // updates to the SAME elements rather than new ones — the entrance
+  // animation silently wouldn't replay, and it's needless fragility for a
+  // value that only needs to be unique within one response.
   const thoughts: GeneratedThought[] = parsed.thoughts
     .filter((t): t is { dimension: LifeDimension; text: string } => isLifeDimension(t.dimension))
-    .map((t, i) => ({ id: `t${i + 1}`, dimension: t.dimension, text: t.text, source: "ai" }));
+    .map((t) => ({ id: crypto.randomUUID(), dimension: t.dimension, text: t.text, source: "ai" }));
 
   // rankedDimensions is derived here, in code, from the 8 thoughts' own
   // dimension tags — not a separate "rank all 15 dimensions" model
