@@ -34,6 +34,11 @@ type DebugSnapshot = {
 type AdaptiveCoachingState = {
   phase: AdaptivePhase;
   firstName: string;
+  /** Structured profile data, collected alongside firstName on the profile
+   *  screen. Weak contextual evidence only, per promptBuilder.ts's age-aware
+   *  reasoning rule — never a proxy for life facts. `null` until the profile
+   *  screen has been completed at least once this session. */
+  age: number | null;
   becomingResponse: string;
   rankedDimensions: RankedDimension[];
   thoughtPool: GeneratedThought[];
@@ -46,7 +51,12 @@ type AdaptiveCoachingState = {
   understandingReview: UnderstandingReview | null;
   debug: DebugSnapshot;
 
+  /** Opening -> profile-collection — a pure phase transition, fired once the
+   *  ImpulseOpeningScreen's animation completes (or Reduce Motion's short
+   *  crossfade does). */
+  finishOpening: () => void;
   setFirstName: (name: string) => void;
+  setAge: (age: number) => void;
   beginMomentOne: () => void;
   /** Kicks off the "generating inspiration" phase — the screen itself calls
    *  the backend and reports the outcome via one of the *Received/*Failed
@@ -87,8 +97,9 @@ type AdaptiveCoachingState = {
 };
 
 const initialState = {
-  phase: { status: "name" } as AdaptivePhase,
+  phase: { status: "opening" } as AdaptivePhase,
   firstName: "",
+  age: null as number | null,
   becomingResponse: "",
   rankedDimensions: [] as RankedDimension[],
   thoughtPool: [] as GeneratedThought[],
@@ -107,7 +118,10 @@ function nextFragmentId(): string {
 export const useAdaptiveCoachingStore = create<AdaptiveCoachingState>((set, get) => ({
   ...initialState,
 
+  finishOpening: () => set({ phase: { status: "name" } }),
+
   setFirstName: (name) => set({ firstName: name.trim() }),
+  setAge: (age) => set({ age }),
 
   beginMomentOne: () => set({ phase: { status: "moment-one" } }),
 
@@ -180,7 +194,7 @@ export const useAdaptiveCoachingStore = create<AdaptiveCoachingState>((set, get)
   resetJourney: (scope) =>
     set({
       ...initialState,
-      ...(scope === "restart" ? { firstName: get().firstName } : {}),
+      ...(scope === "restart" ? { firstName: get().firstName, age: get().age } : {}),
       phase: scope === "restart" ? { status: "moment-one" } : { status: "name" },
     }),
 }));

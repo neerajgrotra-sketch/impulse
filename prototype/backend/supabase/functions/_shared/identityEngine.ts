@@ -275,6 +275,7 @@ async function callModel(userMessage: string, system: string, timeoutMs: number,
 
 export interface GenerateInspirationInput {
   firstName: string;
+  age?: number;
   becomingResponse: string;
 }
 
@@ -290,6 +291,7 @@ export async function generateInspiration(
 ): Promise<InspirationResult> {
   const { system, userMessage } = assembleInspirationPrompt({
     firstName: input.firstName,
+    age: input.age,
     becomingResponse: input.becomingResponse,
     dimensionEnumValues: LIFE_DIMENSIONS,
   });

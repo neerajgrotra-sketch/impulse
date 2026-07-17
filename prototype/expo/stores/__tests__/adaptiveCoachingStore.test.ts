@@ -12,9 +12,27 @@ describe("useAdaptiveCoachingStore", () => {
     expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "name" });
   });
 
+  it("finishOpening advances opening -> name", () => {
+    act(() => {
+      useAdaptiveCoachingStore.setState({ phase: { status: "opening" } });
+    });
+    act(() => {
+      useAdaptiveCoachingStore.getState().finishOpening();
+    });
+    expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "name" });
+  });
+
+  it("setAge stores the structured age value", () => {
+    act(() => {
+      useAdaptiveCoachingStore.getState().setAge(34);
+    });
+    expect(useAdaptiveCoachingStore.getState().age).toBe(34);
+  });
+
   it("advances name -> moment-one -> generating-inspiration in order", () => {
     act(() => {
       useAdaptiveCoachingStore.getState().setFirstName("  Maya  ");
+      useAdaptiveCoachingStore.getState().setAge(34);
       useAdaptiveCoachingStore.getState().beginMomentOne();
     });
     expect(useAdaptiveCoachingStore.getState().firstName).toBe("Maya");
@@ -183,6 +201,7 @@ describe("useAdaptiveCoachingStore", () => {
   describe("resetJourney", () => {
     function populateJourney() {
       useAdaptiveCoachingStore.getState().setFirstName("Maya");
+      useAdaptiveCoachingStore.getState().setAge(34);
       useAdaptiveCoachingStore.getState().beginMomentOne();
       useAdaptiveCoachingStore.getState().submitBecomingResponse("I want to follow through");
       useAdaptiveCoachingStore.getState().inspirationReceived(
@@ -212,6 +231,7 @@ describe("useAdaptiveCoachingStore", () => {
       });
       const state = useAdaptiveCoachingStore.getState();
       expect(state.firstName).toBe("Maya");
+      expect(state.age).toBe(34);
       expect(state.phase).toEqual({ status: "moment-one" });
       expect(state.becomingResponse).toBe("");
       expect(state.rankedDimensions).toHaveLength(0);
@@ -228,6 +248,7 @@ describe("useAdaptiveCoachingStore", () => {
       });
       const state = useAdaptiveCoachingStore.getState();
       expect(state.firstName).toBe("");
+      expect(state.age).toBeNull();
       expect(state.phase).toEqual({ status: "name" });
       expect(state.visionCanvas).toHaveLength(0);
       expect(state.understandingReview).toBeNull();

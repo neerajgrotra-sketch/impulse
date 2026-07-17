@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context";
 import { AdaptiveCoachingCoordinator } from "@/features/adaptive-coaching/AdaptiveCoachingCoordinator";
 import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
@@ -64,15 +64,32 @@ describe("AdaptiveCoachingCoordinator", () => {
     useAdaptiveCoachingStore.getState().resetJourney("everything");
   });
 
-  it("starts on NameCollectionScreen and advances to MomentOneScreen on submit", async () => {
+  it("shows the Impulse opening screen first (on a genuinely fresh store) and auto-advances to profile collection", async () => {
+    useAdaptiveCoachingStore.setState({ phase: { status: "opening" } });
+    jest.useFakeTimers();
+    const { getByLabelText, queryByLabelText } = await renderCoordinator();
+    expect(getByLabelText("Impulse")).toBeTruthy();
+    expect(queryByLabelText("Your first name")).toBeNull();
+
+    await act(async () => {
+      jest.advanceTimersByTime(1000);
+    });
+
+    expect(useAdaptiveCoachingStore.getState().phase).toEqual({ status: "name" });
+    jest.useRealTimers();
+  });
+
+  it("starts on ProfileCollectionScreen and advances to MomentOneScreen on submit", async () => {
     const { getByLabelText, getByText } = await renderCoordinator();
     expect(getByLabelText("Your first name")).toBeTruthy();
 
     await fireEvent.changeText(getByLabelText("Your first name"), "Maya");
+    await fireEvent.changeText(getByLabelText("Your age"), "34");
     await fireEvent.press(getByLabelText("Continue"));
 
-    expect(getByText("Who Do You Want To Become?")).toBeTruthy();
+    expect(getByText("Maya, who do you want to become?")).toBeTruthy();
     expect(useAdaptiveCoachingStore.getState().firstName).toBe("Maya");
+    expect(useAdaptiveCoachingStore.getState().age).toBe(34);
   });
 
   it("renders the safety hand-off screen and nothing else when that phase is active", async () => {
@@ -84,6 +101,7 @@ describe("AdaptiveCoachingCoordinator", () => {
   });
 
   it("renders the understanding-review screen with the stored synthesis and nothing from the old coaching-beat UI", async () => {
+    useAdaptiveCoachingStore.getState().setFirstName("Maya");
     useAdaptiveCoachingStore.getState().beginUnderstandingReview([]);
     useAdaptiveCoachingStore.getState().understandingReviewReceived({
       headline: "Excellence on your own terms",
@@ -95,8 +113,9 @@ describe("AdaptiveCoachingCoordinator", () => {
       confidence: "medium",
     });
     const { getByText } = await renderCoordinator();
-    expect(getByText("Excellence on your own terms")).toBeTruthy();
+    expect(getByText("Maya, I hear you.")).toBeTruthy();
     expect(getByText("Someone who builds mastery patiently.")).toBeTruthy();
+    expect(getByText("interpretation text")).toBeTruthy();
   });
 
   it("Start over -> Reset everything on the understanding-review screen clears the store and reaches Name Collection", async () => {

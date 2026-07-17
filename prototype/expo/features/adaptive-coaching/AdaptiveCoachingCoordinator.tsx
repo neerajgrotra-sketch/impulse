@@ -6,8 +6,9 @@ import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
 import type { AdaptivePhase } from "@/types/adaptiveCoaching";
 import { BuildBadge } from "./components/BuildBadge";
 import { DebugOverlay } from "./components/DebugOverlay";
+import { ImpulseOpeningScreen } from "./screens/ImpulseOpeningScreen";
 import { MomentOneScreen } from "./screens/MomentOneScreen";
-import { NameCollectionScreen } from "./screens/NameCollectionScreen";
+import { ProfileCollectionScreen } from "./screens/ProfileCollectionScreen";
 import { SafetyHandoffScreen } from "./screens/SafetyHandoffScreen";
 import { UnderstandingReviewScreen } from "./screens/UnderstandingReviewScreen";
 import { VisionCanvasScreen } from "./screens/VisionCanvasScreen";
@@ -22,8 +23,12 @@ import { VisionCanvasScreen } from "./screens/VisionCanvasScreen";
  */
 export function AdaptiveCoachingCoordinator() {
   const phase = useAdaptiveCoachingStore((s) => s.phase);
+  const firstName = useAdaptiveCoachingStore((s) => s.firstName);
+  const age = useAdaptiveCoachingStore((s) => s.age);
   const becomingResponse = useAdaptiveCoachingStore((s) => s.becomingResponse);
+  const finishOpening = useAdaptiveCoachingStore((s) => s.finishOpening);
   const setFirstName = useAdaptiveCoachingStore((s) => s.setFirstName);
+  const setAge = useAdaptiveCoachingStore((s) => s.setAge);
   const beginMomentOne = useAdaptiveCoachingStore((s) => s.beginMomentOne);
   const submitBecomingResponse = useAdaptiveCoachingStore((s) => s.submitBecomingResponse);
   const reduceMotion = useReduceMotion();
@@ -61,11 +66,16 @@ export function AdaptiveCoachingCoordinator() {
 
   function renderPhase() {
     switch (phase.status) {
+      case "opening":
+        return <ImpulseOpeningScreen onComplete={finishOpening} />;
       case "name":
         return (
-          <NameCollectionScreen
-            onSubmit={(name) => {
+          <ProfileCollectionScreen
+            initialFirstName={firstName}
+            initialAge={age}
+            onSubmit={(name, submittedAge) => {
               setFirstName(name);
+              setAge(submittedAge);
               beginMomentOne();
             }}
           />
@@ -76,6 +86,7 @@ export function AdaptiveCoachingCoordinator() {
             voiceCapture={voiceCapture}
             onSubmit={submitBecomingResponse}
             initialText={becomingResponse}
+            firstName={firstName}
           />
         );
       case "generating-inspiration":

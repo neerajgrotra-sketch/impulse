@@ -111,6 +111,79 @@ Deno.test("golden: inspiration_generation with ordinary content returns 200, tho
   assertEquals(body.retry_count, 0);
 });
 
+Deno.test("age is threaded from the request payload into generateInspiration's input", async () => {
+  let capturedAge: number | undefined;
+  const deps: OnboardingTurnDeps = {
+    ...depsWithTier("none"),
+    generateInspiration: (input) => {
+      capturedAge = input.age;
+      return Promise.resolve({
+        safety: { tier: "none", rationaleCode: "test" },
+        rankedDimensions: [],
+        thoughts: [{ id: "t1", dimension: "Health & Energy", text: "Someone who feels stronger", source: "ai" as const }],
+        meta: { attempts: 1, providerLatencyMs: 400, parseLatencyMs: 1 },
+      });
+    },
+  };
+  const res = await handleOnboardingTurn(
+    request({ turn_type: "inspiration_generation", first_name: "Nick", age: 48, becoming_response: "I want to be healthy" }),
+    deps,
+  );
+  assertEquals(res.status, 200);
+  assertEquals(capturedAge, 48);
+});
+
+Deno.test("age is threaded from the request payload into synthesizeUnderstanding's input", async () => {
+  let capturedAge: number | undefined;
+  const deps: OnboardingTurnDeps = {
+    ...depsWithTier("none"),
+    synthesizeUnderstanding: (input) => {
+      capturedAge = input.age;
+      return Promise.resolve({
+        headline: "headline",
+        coreAspiration: "aspiration",
+        interpretation: "interpretation",
+        identityStatement: "identity",
+        emergingThemes: [],
+        uncertainties: [],
+        confidence: "low" as const,
+      });
+    },
+  };
+  const res = await handleOnboardingTurn(
+    request({
+      turn_type: "final_synthesis",
+      first_name: "Nick",
+      age: 48,
+      becoming_response: "I want to be healthy and lose weight",
+      vision_canvas: [{ text: "worth not measured by a number on a scale", source: "ai", edited: false }],
+    }),
+    deps,
+  );
+  assertEquals(res.status, 200);
+  assertEquals(capturedAge, 48);
+});
+
+Deno.test("a non-numeric age is rejected as a validation error, for both inspiration_generation and final_synthesis", async () => {
+  const inspirationRes = await handleOnboardingTurn(
+    request({ turn_type: "inspiration_generation", first_name: "Nick", age: "forty-eight", becoming_response: "text" }),
+    depsWithTier("none"),
+  );
+  assertEquals(inspirationRes.status, 400);
+
+  const synthesisRes = await handleOnboardingTurn(
+    request({
+      turn_type: "final_synthesis",
+      first_name: "Nick",
+      age: "forty-eight",
+      becoming_response: "text",
+      vision_canvas: [{ text: "fragment", source: "ai", edited: false }],
+    }),
+    depsWithTier("none"),
+  );
+  assertEquals(synthesisRes.status, 400);
+});
+
 Deno.test("golden: onboarding_beat with ordinary content returns 200 and a chosen beat/move", async () => {
   const res = await handleOnboardingTurn(
     request({

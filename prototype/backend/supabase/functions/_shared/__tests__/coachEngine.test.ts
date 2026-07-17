@@ -1,5 +1,5 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertMatch, assertRejects } from "@std/assert";
 import { CoachEngineError, synthesizeUnderstanding, type SynthesisModelResponse } from "../coachEngine.ts";
 
 // synthesizeUnderstanding: retry/timeout/overload/refusal/malformed-JSON, via
@@ -191,4 +191,25 @@ Deno.test("synthesizeUnderstanding rejects a banned word in any generated prose 
     ],
   };
   await assertRejects(() => synthesizeUnderstanding(VALID_INPUT, sequence(withBannedWord)), CoachEngineError);
+});
+
+Deno.test("synthesizeUnderstanding threads age into the assembled prompt, verbatim rule included, when provided", async () => {
+  let capturedSystem = "";
+  const fn = (_userMessage: string, system: string, _timeoutMs: number) => {
+    capturedSystem = system;
+    return Promise.resolve(validResponse());
+  };
+  await synthesizeUnderstanding({ ...VALID_INPUT, age: 48 }, fn);
+  assertMatch(capturedSystem, /Their age: 48\./);
+  assertMatch(capturedSystem, /Age is weak contextual evidence, not a fact about the user's circumstances\./);
+});
+
+Deno.test("synthesizeUnderstanding omits any age line from the prompt when age is not provided", async () => {
+  let capturedSystem = "";
+  const fn = (_userMessage: string, system: string, _timeoutMs: number) => {
+    capturedSystem = system;
+    return Promise.resolve(validResponse());
+  };
+  await synthesizeUnderstanding(VALID_INPUT, fn);
+  assertEquals(capturedSystem.includes("Their age:"), false);
 });

@@ -138,6 +138,7 @@ export interface UnderstandingReview {
 
 export interface SynthesizeUnderstandingInput {
   firstName: string;
+  age?: number;
   becomingResponse: string;
   visionCanvas: FinalSynthesisFragmentInput[];
   dismissedThoughts?: { text: string; source: "ai" | "fallback" | "user" }[];

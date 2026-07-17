@@ -57,6 +57,9 @@ import {
 interface InspirationRequest {
   turn_type: "inspiration_generation";
   first_name?: string;
+  /** Weak contextual signal only — see promptBuilder.ts's age-aware
+   *  reasoning rule for exactly how (and how not) this is used. */
+  age?: number;
   becoming_response: string;
 }
 
@@ -71,6 +74,7 @@ interface OnboardingBeatRequest {
 interface FinalSynthesisRequest {
   turn_type: "final_synthesis";
   first_name?: string;
+  age?: number;
   becoming_response: string;
   vision_canvas: { text: string; source: "ai" | "fallback" | "user"; edited: boolean }[];
   dismissed_thoughts?: { text: string; source: "ai" | "fallback" | "user" }[];
@@ -138,7 +142,8 @@ function isValidInspirationRequest(body: unknown): body is InspirationRequest {
   return (
     b.turn_type === "inspiration_generation" &&
     typeof b.becoming_response === "string" &&
-    b.becoming_response.trim().length > 0
+    b.becoming_response.trim().length > 0 &&
+    (b.age === undefined || typeof b.age === "number")
   );
 }
 
@@ -173,6 +178,7 @@ function isValidFinalSynthesisRequest(body: unknown): body is FinalSynthesisRequ
     if (!Array.isArray(b.dismissed_thoughts)) return false;
     if (!b.dismissed_thoughts.every((t) => typeof (t as { text?: unknown }).text === "string")) return false;
   }
+  if (b.age !== undefined && typeof b.age !== "number") return false;
   return true;
 }
 
@@ -216,6 +222,7 @@ async function handleInspirationGeneration(
   try {
     result = await deps.generateInspiration({
       firstName: payload.first_name ?? "",
+      age: payload.age,
       becomingResponse: payload.becoming_response,
     });
   } catch (err) {
@@ -394,6 +401,7 @@ async function handleFinalSynthesis(
   try {
     result = await deps.synthesizeUnderstanding({
       firstName: payload.first_name ?? "",
+      age: payload.age,
       becomingResponse: payload.becoming_response,
       visionCanvas: payload.vision_canvas,
       dismissedThoughts: payload.dismissed_thoughts,

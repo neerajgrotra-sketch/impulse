@@ -7,7 +7,6 @@ import { GradientBackground, MomentSphere, PrimaryButton, VoiceCaptureButton } f
 import { VisionCanvas } from "@/components/VisionCanvas";
 import type { LifeDimension } from "@/constants/lifeDimensions";
 import { pickContextualThoughts, type ThoughtTheme } from "@/constants/thoughtLibrary";
-import { AE001_TOTAL_MOMENTS } from "@/features/adaptive-coaching/journey";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useScreenReaderEnabled } from "@/hooks/useScreenReaderEnabled";
 import { useSpeechRecognitionAdapter } from "@/hooks/useSpeechRecognitionAdapter";
@@ -18,6 +17,9 @@ import { colors, fontFamily, radius, spacing, typography } from "@/theme";
 import type { GeneratedThought } from "@/types/adaptiveCoaching";
 import { logTelemetryEvent } from "@/utils/telemetry";
 import { ThoughtOptionsGrid } from "../components/ThoughtOptionsGrid";
+import { useThoughtOptionsPool } from "../hooks/useThoughtOptionsPool";
+
+const EMPTY_DISMISSED_IDS: ReadonlySet<string> = new Set();
 
 type VisionCanvasScreenProps = {
   voiceCapture: VoiceCapture;
@@ -75,6 +77,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   const speechAdapter = useSpeechRecognitionAdapter(voiceCapture);
 
   const firstName = useAdaptiveCoachingStore((s) => s.firstName);
+  const age = useAdaptiveCoachingStore((s) => s.age);
   const becomingResponse = useAdaptiveCoachingStore((s) => s.becomingResponse);
   const thoughtPool = useAdaptiveCoachingStore((s) => s.thoughtPool);
   const visionCanvas = useAdaptiveCoachingStore((s) => s.visionCanvas);
@@ -101,7 +104,11 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   // --- Inspiration-generation request lifecycle (this screen owns it, same
   // convention as every other backend call in this store's design). ---
   const [elapsedState, setElapsedState] = useState<"pending" | "delayed" | "timeout">("pending");
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  // Dismissal on the AI-thought path is owned by useThoughtOptionsPool below
+  // (it needs to drive instant reserve-backed replacement, not just hide a
+  // chip) — this state is scoped to the separate, much simpler fallback-grid
+  // path (Continue with suggestions), which has no reserve to replace from.
+  const [fallbackDismissedIds, setFallbackDismissedIds] = useState<Set<string>>(new Set());
   const [fallbackThoughts, setFallbackThoughts] = useState<GeneratedThought[] | null>(null);
   // A ref, not state: only ever written and read from inside fetchInspiration
   // itself (never rendered), and a `useState` here would go stale — since
@@ -140,6 +147,41 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   const showingFallbackGrid = !hasAiThoughts && fallbackThoughts !== null;
   const isGenerating = !hasAiThoughts && !showingRecovery && !showingFallbackGrid;
 
+  // The AI-thought reserve pool (item 5 of the physical-device UX review):
+  // a fetched batch is split into a visible subset + reserve, so dismissing
+  // a bubble is answered instantly from the reserve instead of a fresh
+  // provider call. Resets automatically whenever `thoughtPool` gets a new
+  // array reference (a fresh fetch or "more like this").
+  const thoughtOptionsPool = useThoughtOptionsPool(thoughtPool);
+  const backgroundRefillRef = useRef(false);
+
+  // Silent background refill — fires only once dismissals have actually
+  // thinned the reserve (never proactively right after the initial fetch,
+  // and never per-dismissal — only when the reserve itself is genuinely
+  // running low), and never while still loading or showing the fallback
+  // grid (there is no AI reserve to refill there).
+  useEffect(() => {
+    const hasDismissed = thoughtOptionsPool.dismissedTexts.length > 0;
+    if (!hasAiThoughts || !hasDismissed || !thoughtOptionsPool.needsRefill || backgroundRefillRef.current) return;
+    backgroundRefillRef.current = true;
+    (async () => {
+      try {
+        const result = await requestInspiration({ firstName, age, becomingResponse });
+        if (!isMountedRef.current) return; // stale — navigated away while this was in flight
+        if (isHardStopResponse(result)) return; // don't disrupt an already-in-progress session over a background refill
+        thoughtOptionsPool.addToReserve(result.thoughts);
+      } catch {
+        // Silent by design — the reserve just stays thin; "More like this"
+        // remains available as a manual fallback, and dismissing further
+        // simply removes without an instant replacement once reserve is
+        // exhausted (useThoughtOptionsPool's own documented behavior).
+      } finally {
+        backgroundRefillRef.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasAiThoughts, thoughtOptionsPool.needsRefill, thoughtOptionsPool.dismissedTexts.length, firstName, age, becomingResponse]);
+
   const fetchInspiration = useCallback(
     async (isRetry: boolean) => {
       inspirationControllerRef.current?.abort();
@@ -147,11 +189,11 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
       inspirationControllerRef.current = controller;
       setElapsedState("pending");
       setFallbackThoughts(null);
-      setDismissedIds(new Set());
+      setFallbackDismissedIds(new Set());
       if (isRetry) retryCountRef.current += 1;
 
       try {
-        const result = await requestInspiration({ firstName, becomingResponse }, { signal: controller.signal });
+        const result = await requestInspiration({ firstName, age, becomingResponse }, { signal: controller.signal });
         if (isHardStopResponse(result)) {
           inspirationHardStopped(result.safety.message);
           return;
@@ -175,7 +217,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
         console.error("[VisionCanvasScreen] inspiration request failed:", toCalmUserMessage(err));
       }
     },
-    [firstName, becomingResponse, inspirationReceived, inspirationHardStopped]
+    [firstName, age, becomingResponse, inspirationReceived, inspirationHardStopped]
   );
 
   // Fires exactly once per screen mount — this screen is only ever reached
@@ -229,13 +271,12 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
     logTelemetryEvent({ type: "inspiration_more_like_this" });
     setRegenerating(true);
     try {
-      const result = await requestInspiration({ firstName, becomingResponse });
+      const result = await requestInspiration({ firstName, age, becomingResponse });
       if (!isMountedRef.current) return; // stale — user navigated away while this was in flight
       if (isHardStopResponse(result)) {
         inspirationHardStopped(result.safety.message);
         return;
       }
-      setDismissedIds(new Set());
       moreThoughtsReceived({ rankedDimensions: result.rankedDimensions, thoughts: result.thoughts });
     } catch (err) {
       if (!isMountedRef.current) return; // stale — nothing to recover into
@@ -248,17 +289,33 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
     }
   }
 
-  const offeredThoughts: GeneratedThought[] = showingFallbackGrid ? (fallbackThoughts ?? []) : thoughtPool;
+  const offeredThoughts: GeneratedThought[] = showingFallbackGrid ? (fallbackThoughts ?? []) : thoughtOptionsPool.visible;
   const selectedTexts = new Set(visionCanvas.map((f) => f.text));
 
+  // Tap the bubble body: toggle selected/unselected (item 5A) — reads the
+  // store directly (not the component's subscribed `visionCanvas`) so two
+  // rapid taps in the same tick both see the true latest state rather than
+  // racing against a stale closure.
   function handleSelectThought(t: GeneratedThought) {
-    if (visionCanvas.length >= MAX_VISION_FRAGMENTS) return;
-    if (visionCanvas.some((f) => f.text === t.text)) return;
+    const current = useAdaptiveCoachingStore.getState().visionCanvas;
+    const existing = current.find((f) => f.origin === "thought_tap" && f.text === t.text);
+    if (existing) {
+      removeVisionFragment(existing.id);
+      return;
+    }
+    if (current.length >= MAX_VISION_FRAGMENTS) return;
     addVisionFragment({ text: t.text, origin: "thought_tap", edited: false, source: t.source });
   }
 
+  // Tap the X: permanently dismiss. On the AI path, useThoughtOptionsPool
+  // owns instant reserve-backed replacement; the fallback grid has no
+  // reserve, so it just hides the chip (same as before this rebuild).
   function handleDismissThought(t: GeneratedThought) {
-    setDismissedIds((prev) => new Set(prev).add(t.id));
+    if (showingFallbackGrid) {
+      setFallbackDismissedIds((prev) => new Set(prev).add(t.id));
+      return;
+    }
+    thoughtOptionsPool.dismiss(t);
   }
 
   function handleRemoveFragment(id: string) {
@@ -304,9 +361,11 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
   // still has them in scope — they are never persisted to the store
   // otherwise.
   function handleContinue() {
-    const dismissedThoughts = offeredThoughts
-      .filter((t) => dismissedIds.has(t.id))
-      .map((t) => ({ text: t.text, source: t.source }));
+    const dismissedThoughts = showingFallbackGrid
+      ? (fallbackThoughts ?? [])
+          .filter((t) => fallbackDismissedIds.has(t.id))
+          .map((t) => ({ text: t.text, source: t.source }))
+      : thoughtOptionsPool.dismissedTexts.map((text) => ({ text, source: "ai" as const }));
     logTelemetryEvent({ type: "time_to_continue", ms: Date.now() - continueStartRef.current });
     const acceptedFragments = visionCanvas.filter((f) => f.origin === "thought_tap" && !f.edited).length;
     const editedFragments = visionCanvas.length - acceptedFragments;
@@ -335,11 +394,13 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
 
         <View style={styles.topGroup}>
           <Text style={styles.title} accessibilityRole="header">
-            {"Tell Me More – What's in Your Mind"}
+            {firstName ? `I hear you, ${firstName}. Let's make that clearer.` : "Let's make that clearer."}
+          </Text>
+          <Text style={[typography.bodySecondary, styles.supportingCopy]}>
+            Choose anything that feels true. You can change your mind.
           </Text>
           <MomentSphere
             currentMoment={2}
-            totalMoments={AE001_TOTAL_MOMENTS}
             state={isGenerating ? "thinking" : "idle"}
             listening={speechAdapter.status === "listening"}
             hasError={showingRecovery}
@@ -376,7 +437,7 @@ export function VisionCanvasScreen({ voiceCapture }: VisionCanvasScreenProps) {
               loading={isGenerating}
               thoughts={offeredThoughts}
               selectedTexts={selectedTexts}
-              dismissedIds={dismissedIds}
+              dismissedIds={showingFallbackGrid ? fallbackDismissedIds : EMPTY_DISMISSED_IDS}
               onSelect={handleSelectThought}
               onDismiss={handleDismissThought}
               reduceMotion={reduceMotion}
@@ -488,6 +549,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   statusText: { color: colors.inkSecondary },
+  supportingCopy: { textAlign: "center", paddingHorizontal: spacing.lg },
   originalStatementWrap: {
     width: "100%",
     borderLeftWidth: 2,

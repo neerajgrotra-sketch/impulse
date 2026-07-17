@@ -2,11 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GradientBackground, MomentSphere, PrimaryButton } from "@/components";
-import { AE001_TOTAL_MOMENTS } from "@/features/adaptive-coaching/journey";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { isHardStopResponse, requestFinalSynthesis, toCalmUserMessage } from "@/services/onboardingTurnApi";
 import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
-import { colors, radius, spacing, typography } from "@/theme";
+import { colors, fontFamily, radius, spacing, typography } from "@/theme";
 import { logTelemetryEvent } from "@/utils/telemetry";
 import { AdjustUnderstandingSheet } from "../components/AdjustUnderstandingSheet";
 import { StartOverSheet } from "../components/StartOverSheet";
@@ -23,12 +22,20 @@ const DELAYED_MESSAGE_MS = 6_000;
  * failure) matching VisionCanvasScreen's own established convention for the
  * inspiration fetch, so a stale response arriving after Start Over unmounts
  * this screen can never repopulate the store.
+ *
+ * Hierarchy (physical-device UX review, item 7): the identity statement
+ * leads, most prominent — not a dense opening paragraph. `headline` and
+ * `coreAspiration` remain in the schema/response (a backend/reliability
+ * concern this pass deliberately leaves untouched) but are no longer
+ * rendered here; the review reads as identity -> core understanding ->
+ * themes -> one honest uncertainty -> actions.
  */
 export function UnderstandingReviewScreen() {
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
 
   const firstName = useAdaptiveCoachingStore((s) => s.firstName);
+  const age = useAdaptiveCoachingStore((s) => s.age);
   const becomingResponse = useAdaptiveCoachingStore((s) => s.becomingResponse);
   const visionCanvas = useAdaptiveCoachingStore((s) => s.visionCanvas);
   const dismissedThoughts = useAdaptiveCoachingStore((s) => s.dismissedThoughts);
@@ -67,7 +74,7 @@ export function UnderstandingReviewScreen() {
 
       try {
         const result = await requestFinalSynthesis(
-          { firstName, becomingResponse, visionCanvas, dismissedThoughts, correctionNote },
+          { firstName, age, becomingResponse, visionCanvas, dismissedThoughts, correctionNote },
           { signal: controller.signal }
         );
         if (!isMountedRef.current || controller.signal.aborted) return;
@@ -87,7 +94,7 @@ export function UnderstandingReviewScreen() {
         if (isMountedRef.current) setRegenerating(false);
       }
     },
-    [firstName, becomingResponse, visionCanvas, dismissedThoughts, understandingReviewReceived, understandingReviewHardStopped]
+    [firstName, age, becomingResponse, visionCanvas, dismissedThoughts, understandingReviewReceived, understandingReviewHardStopped]
   );
 
   // Fires once per mount, same convention as VisionCanvasScreen's inspiration
@@ -127,13 +134,7 @@ export function UnderstandingReviewScreen() {
         contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.xl }]}
         showsVerticalScrollIndicator={false}
       >
-        <MomentSphere
-          currentMoment={3}
-          totalMoments={AE001_TOTAL_MOMENTS}
-          state={isLoading ? "thinking" : "complete"}
-          size={96}
-          reduceMotion={reduceMotion}
-        />
+        <MomentSphere currentMoment={3} state={isLoading ? "thinking" : "complete"} size={88} reduceMotion={reduceMotion} />
 
         {isLoading && (
           <View style={styles.loadingWrap}>
@@ -156,19 +157,20 @@ export function UnderstandingReviewScreen() {
 
         {understandingReview && (
           <>
-            <Text style={[typography.headline, styles.header]} accessibilityRole="header">
-              Here’s what I think you mean
+            <Text style={styles.header} accessibilityRole="header">
+              {firstName ? `${firstName}, I hear you.` : "I hear you."}
             </Text>
 
-            <View style={styles.card}>
-              <Text style={[typography.body, styles.headline]}>{understandingReview.headline}</Text>
-              <Text style={[typography.bodySecondary, styles.coreAspiration]}>{understandingReview.coreAspiration}</Text>
-              <Text style={[typography.bodySecondary, styles.paragraph]}>{understandingReview.interpretation}</Text>
+            {/* Hero identity card — the most prominent content on the
+                screen, leading (not a dense opening paragraph). */}
+            <View style={[styles.card, styles.heroCard]}>
+              <Text style={[typography.eyebrow, styles.cardLabel]}>THE PERSON YOU ARE BECOMING</Text>
+              <Text style={styles.identityStatement}>{understandingReview.identityStatement}</Text>
             </View>
 
             <View style={styles.card}>
-              <Text style={[typography.eyebrow, styles.cardLabel]}>THE PERSON YOU ARE BECOMING</Text>
-              <Text style={[typography.body, styles.paragraph]}>{understandingReview.identityStatement}</Text>
+              <Text style={[typography.eyebrow, styles.cardLabel]}>WHAT SEEMS TO MATTER UNDERNEATH</Text>
+              <Text style={[typography.body, styles.paragraph]}>{understandingReview.interpretation}</Text>
             </View>
 
             {understandingReview.emergingThemes.length > 0 && (
@@ -244,7 +246,13 @@ const styles = StyleSheet.create({
   },
   recoveryText: { textAlign: "center" },
   recoveryAction: { color: colors.accent, fontWeight: "600" },
-  header: { marginTop: spacing.sm },
+  header: {
+    marginTop: spacing.sm,
+    fontFamily: fontFamily.serifRegular,
+    fontSize: 22,
+    lineHeight: 29,
+    color: colors.ink,
+  },
   card: {
     borderWidth: 1,
     borderColor: colors.overlay.hairline,
@@ -253,9 +261,17 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     backgroundColor: colors.overlay.scrim,
   },
+  heroCard: {
+    borderColor: colors.accent,
+    backgroundColor: "rgba(217, 171, 125, 0.12)",
+  },
   cardLabel: { letterSpacing: 1.4 },
-  headline: { fontWeight: "600" },
-  coreAspiration: { fontStyle: "italic" },
+  identityStatement: {
+    fontFamily: fontFamily.serifMedium,
+    fontSize: 22,
+    lineHeight: 30,
+    color: colors.ink,
+  },
   paragraph: { textAlign: "left" },
   themesRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
   themeChip: {

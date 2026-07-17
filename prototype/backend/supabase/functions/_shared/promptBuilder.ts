@@ -27,8 +27,20 @@ export interface AssembledPrompt {
   userMessage: string;
 }
 
+/** Verbatim age-aware reasoning rule (physical-device UX review, item 6) —
+ *  reused identically by assembleInspirationPrompt and
+ *  assembleFinalSynthesisPrompt so the two turns that receive age apply the
+ *  exact same discipline to it, not two independently-worded versions that
+ *  could drift. Age is deliberately treated as weak evidence, never a proxy
+ *  for life facts — the same "never assert more confidence than the
+ *  evidence supports" discipline this file's other prompts already apply
+ *  to inferred content in general, made explicit for this one signal. */
+const AGE_AWARE_REASONING_RULE =
+  "Age is weak contextual evidence, not a fact about the user's circumstances. Use it only to calibrate language and consider plausible life-stage questions. Never infer family, parenthood, marital status, career seniority, health status, income, retirement, or priorities from age. When age suggests a potentially relevant theme, express it as a question or uncertainty, not as a conclusion.";
+
 export interface InspirationPromptInput {
   firstName: string;
+  age?: number;
   becomingResponse: string;
   dimensionEnumValues: readonly LifeDimension[];
 }
@@ -66,7 +78,7 @@ Each thought must be identity-shaped ("Someone who..." or a bare quality, never 
 
 If you classify tier "elevated" or "crisis", still generate your best-effort 8 thoughts as instructed (the caller decides whether to show them — never withhold effort on the classification's account), but never let the classification itself soften toward "none"/"low" because generation would otherwise feel awkward to pair with a hard stop.`;
 
-  const layer2 = `This person's name: ${input.firstName || "the user"}. This is the very first thing they have ever said to this product — there is no prior session history.`;
+  const layer2 = `This person's name: ${input.firstName || "the user"}.${input.age ? ` Their age: ${input.age}. ${AGE_AWARE_REASONING_RULE}` : ""} This is the very first thing they have ever said to this product — there is no prior session history.`;
 
   const layer4 = `Their answer to "Who are you becoming?" is the entire basis for both your classification and your generation below.`;
 
@@ -127,6 +139,7 @@ export interface FinalSynthesisFragmentInput {
 
 export interface FinalSynthesisPromptInput {
   firstName: string;
+  age?: number;
   becomingResponse: string;
   visionCanvas: FinalSynthesisFragmentInput[];
   dismissedThoughts?: { text: string; source: "ai" | "fallback" | "user" }[];
@@ -157,13 +170,13 @@ Rules:
 Produce exactly these fields:
 1. headline — a short, specific phrase capturing the core pattern you found (not a generic title like "Your Journey").
 2. coreAspiration — one sentence naming the central aspiration, in your own synthesized words, not a copied fragment.
-3. interpretation — 2-4 sentences explaining what these selected statements collectively reveal. Distinguish what is directly evidenced from what is inferred, and name the tension or distinction underlying the aspiration (for example: mastery vs. comparison, process vs. outcome, self-defined vs. externally-defined) if the evidence actually supports one.
+3. interpretation — approximately 60-100 words, written as 1-2 short paragraphs, explaining what these selected statements collectively reveal. Address the person directly in second person ("you..."), never in third person and never by name. Distinguish what is directly evidenced from what is inferred, and name the tension or distinction underlying the aspiration (for example: mastery vs. comparison, process vs. outcome, self-defined vs. externally-defined) if the evidence actually supports one.
 4. identityStatement — one concise sentence describing the identity direction connecting the fragments, in the product's existing "Someone who..." voice.
 5. emergingThemes — 3-5 short theme labels (2-4 words each), each a distinct pattern from the evidence, not a restatement of a single fragment.
 6. uncertainties — 1-3 honest, specific statements of what remains genuinely unclear about this person from what they've shared so far. Never leave this empty if any real ambiguity exists in a short amount of evidence (it almost always does at this early stage); do not pad it with false uncertainty if given unusually rich, clear input.
 7. confidence — "low", "medium", or "high", reflecting how well-grounded interpretation and identityStatement are in the actual evidence given (fewer or vaguer fragments should mean lower confidence, never inflated to sound more certain than the evidence supports).`;
 
-  const layer2 = `This person's name: ${input.firstName || "the user"}.`;
+  const layer2 = `This person's name: ${input.firstName || "the user"}.${input.age ? ` Their age: ${input.age}. ${AGE_AWARE_REASONING_RULE}` : ""}`;
 
   const fragmentLines = input.visionCanvas
     .map((f, i) => `${i + 1}. "${f.text}" (source: ${f.source}, ${f.edited ? "edited by the person" : "unedited"})`)

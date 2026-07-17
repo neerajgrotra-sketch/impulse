@@ -296,6 +296,27 @@ Deno.test("findThoughtSetViolation flags a non-string text field instead of thro
   assertMatch(violation ?? "", /not a string/);
 });
 
+Deno.test("generateInspiration threads age into the assembled prompt, verbatim rule included, when provided", async () => {
+  let capturedSystem = "";
+  const fn = (_userMessage: string, system: string, _timeoutMs: number) => {
+    capturedSystem = system;
+    return Promise.resolve(validResponse());
+  };
+  await generateInspiration({ firstName: "Nick", age: 48, becomingResponse: "I want to be healthy" }, fn);
+  assertMatch(capturedSystem, /Their age: 48\./);
+  assertMatch(capturedSystem, /Age is weak contextual evidence, not a fact about the user's circumstances\./);
+});
+
+Deno.test("generateInspiration omits any age line from the prompt when age is not provided", async () => {
+  let capturedSystem = "";
+  const fn = (_userMessage: string, system: string, _timeoutMs: number) => {
+    capturedSystem = system;
+    return Promise.resolve(validResponse());
+  };
+  await generateInspiration(VALID_INPUT, fn);
+  assertEquals(capturedSystem.includes("Their age:"), false);
+});
+
 Deno.test("each generated thought gets a unique id, even across two calls (no positional collision for 'more like this')", async () => {
   const first = await generateInspiration(VALID_INPUT, sequence(validResponse()));
   const second = await generateInspiration(VALID_INPUT, sequence(validResponse()));

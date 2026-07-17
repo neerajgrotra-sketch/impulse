@@ -15,7 +15,6 @@ import * as Haptics from "expo-haptics";
 import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EditableVisionCard, GradientBackground, MomentSphere, PrimaryButton, VoiceCaptureButton } from "@/components";
-import { AE001_TOTAL_MOMENTS } from "@/features/adaptive-coaching/journey";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useScreenReaderEnabled } from "@/hooks/useScreenReaderEnabled";
 import { useSpeechRecognitionAdapter } from "@/hooks/useSpeechRecognitionAdapter";
@@ -33,6 +32,9 @@ type MomentOneScreenProps = {
    *  button) rather than reached fresh — FAILURE UX's "preserve all user
    *  input" requires the original text still be here, not a blank card. */
   initialText?: string;
+  /** Personalizes the title — "{firstName}, who do you want to become?" —
+   *  falls back to an unaddressed phrasing if somehow empty. */
+  firstName: string;
 };
 
 /**
@@ -43,7 +45,7 @@ type MomentOneScreenProps = {
  * `IdentityInspirationScreen`'s Reflection→Capture mechanics without the
  * (not-yet-relevant) thought-tap path.
  */
-export function MomentOneScreen({ voiceCapture, onSubmit, initialText = "" }: MomentOneScreenProps) {
+export function MomentOneScreen({ voiceCapture, onSubmit, initialText = "", firstName }: MomentOneScreenProps) {
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
   const screenReaderEnabled = useScreenReaderEnabled();
@@ -150,11 +152,13 @@ export function MomentOneScreen({ voiceCapture, onSubmit, initialText = "" }: Mo
           >
             <View style={styles.topGroup}>
               <Text style={styles.title} accessibilityRole="header">
-                Who Do You Want To Become?
+                {firstName ? `${firstName}, who do you want to become?` : "Who do you want to become?"}
+              </Text>
+              <Text style={[typography.bodySecondary, styles.supportingCopy]}>
+                Start with whatever comes to mind. It doesn&rsquo;t need to be perfectly worded.
               </Text>
               <MomentSphere
                 currentMoment={1}
-                totalMoments={AE001_TOTAL_MOMENTS}
                 state={speechAdapter.status === "processing" ? "thinking" : "idle"}
                 listening={speechAdapter.status === "listening"}
                 isTyping={keyboardVisible}
@@ -249,6 +253,10 @@ const styles = StyleSheet.create({
     fontSize: 20,
     lineHeight: 27,
     color: colors.ink,
+    textAlign: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  supportingCopy: {
     textAlign: "center",
     paddingHorizontal: spacing.lg,
   },

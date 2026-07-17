@@ -383,13 +383,14 @@ export function isHardStopResponse(
 }
 
 export async function requestInspiration(
-  input: { firstName: string; becomingResponse: string },
+  input: { firstName: string; age?: number | null; becomingResponse: string },
   options?: { signal?: AbortSignal }
 ): Promise<InspirationResponse | HardStopResponse> {
   const raw = await postOnboardingTurn(
     {
       turn_type: "inspiration_generation",
       first_name: input.firstName,
+      age: input.age ?? undefined,
       becoming_response: input.becomingResponse,
     },
     INSPIRATION_TIMEOUT_MS,
@@ -424,6 +425,7 @@ export async function requestCoachingBeat(
 export async function requestFinalSynthesis(
   input: {
     firstName: string;
+    age?: number | null;
     becomingResponse: string;
     visionCanvas: VisionFragment[];
     dismissedThoughts?: { text: string; source: ThoughtSource }[];
@@ -435,6 +437,7 @@ export async function requestFinalSynthesis(
     {
       turn_type: "final_synthesis",
       first_name: input.firstName,
+      age: input.age ?? undefined,
       becoming_response: input.becomingResponse,
       vision_canvas: input.visionCanvas.map((f) => ({ text: f.text, source: f.source, edited: f.edited })),
       dismissed_thoughts: input.dismissedThoughts,

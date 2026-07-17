@@ -147,6 +147,7 @@ export type AdaptiveQuestionResponse = {
  * parallel experiment, not a modification of it).
  */
 export type AdaptivePhase =
+  | { status: "opening" }
   | { status: "name" }
   | { status: "moment-one" }
   | { status: "generating-inspiration" }

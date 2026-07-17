@@ -18,11 +18,12 @@ function buildVoiceCapture(overrides: Partial<VoiceCapture> = {}): VoiceCapture 
 function renderScreen(
   onSubmit: (text: string) => void,
   voiceCapture: VoiceCapture = buildVoiceCapture(),
-  initialText?: string
+  initialText?: string,
+  firstName = "Maya"
 ) {
   return render(
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <MomentOneScreen voiceCapture={voiceCapture} onSubmit={onSubmit} initialText={initialText} />
+      <MomentOneScreen voiceCapture={voiceCapture} onSubmit={onSubmit} initialText={initialText} firstName={firstName} />
     </SafeAreaProvider>
   );
 }
@@ -36,10 +37,15 @@ describe("MomentOneScreen", () => {
     jest.clearAllTimers();
   });
 
-  it("asks 'Who Do You Want To Become?' and shows no thought stream (nothing is generated yet at this point)", async () => {
+  it("personalizes the title with the person's name and shows no thought stream (nothing is generated yet at this point)", async () => {
     const { getByText, queryAllByLabelText } = await renderScreen(jest.fn());
-    expect(getByText("Who Do You Want To Become?")).toBeTruthy();
+    expect(getByText("Maya, who do you want to become?")).toBeTruthy();
     expect(queryAllByLabelText(/^Use this thought:/)).toHaveLength(0);
+  });
+
+  it("falls back to an unaddressed title when firstName is empty", async () => {
+    const { getByText } = await renderScreen(jest.fn(), buildVoiceCapture(), undefined, "");
+    expect(getByText("Who do you want to become?")).toBeTruthy();
   });
 
   it("reveals an editable card when Type is pressed, and Continue is disabled until text exists", async () => {

@@ -2,46 +2,50 @@ import { render } from "@testing-library/react-native";
 import { MomentSphere } from "@/components/MomentSphere";
 
 describe("MomentSphere", () => {
-  it("renders the current moment number as the dominant element, with a small 'Moment' caption", async () => {
-    const { getByText } = await render(<MomentSphere currentMoment={2} totalMoments={3} state="idle" />);
+  it("renders only the bare step number — no 'Moment' word anywhere", async () => {
+    const { getByText, queryByText } = await render(<MomentSphere currentMoment={2} state="idle" />);
     expect(getByText("2")).toBeTruthy();
-    expect(getByText("Moment")).toBeTruthy();
+    expect(queryByText("Moment")).toBeNull();
+    expect(queryByText(/Moment/)).toBeNull();
   });
 
-  it("never renders the total as 'X of Y' text — only in the accessibility label", async () => {
-    const { queryByText } = await render(<MomentSphere currentMoment={2} totalMoments={3} state="idle" />);
+  it("never renders a total or 'X of Y' text anywhere, visually or otherwise", async () => {
+    const { queryByText } = await render(<MomentSphere currentMoment={2} state="idle" />);
     expect(queryByText("2 of 3")).toBeNull();
-    expect(queryByText(/of 3/)).toBeNull();
+    expect(queryByText(/of \d/)).toBeNull();
   });
 
-  it("exposes exactly one VoiceOver-facing accessibility label", async () => {
-    const { getByLabelText } = await render(<MomentSphere currentMoment={2} totalMoments={3} state="idle" />);
-    expect(getByLabelText("Moment 2 of 3")).toBeTruthy();
+  it("exposes a 'Journey step N' accessibility label, with no total in it", async () => {
+    const { getByLabelText } = await render(<MomentSphere currentMoment={2} state="idle" />);
+    expect(getByLabelText("Journey step 2")).toBeTruthy();
   });
 
-  it("falls back to a totals-free accessibility label when totalMoments is omitted (an open-ended adaptive journey)", async () => {
-    const { getByLabelText, getByText } = await render(<MomentSphere currentMoment={4} state="idle" />);
-    expect(getByLabelText("Moment 4")).toBeTruthy();
-    expect(getByText("4")).toBeTruthy();
-  });
-
-  it("renders the first moment", async () => {
-    const { getByLabelText } = await render(<MomentSphere currentMoment={1} totalMoments={3} state="idle" />);
-    expect(getByLabelText("Moment 1 of 3")).toBeTruthy();
-  });
-
-  it("renders the final moment in the complete state without throwing", async () => {
-    const { getByLabelText } = await render(<MomentSphere currentMoment={3} totalMoments={3} state="complete" />);
-    expect(getByLabelText("Moment 3 of 3")).toBeTruthy();
-  });
-
-  it("renders the thinking state without throwing", async () => {
-    const { getByLabelText } = await render(<MomentSphere currentMoment={2} totalMoments={3} state="thinking" />);
-    expect(getByLabelText("Moment 2 of 3")).toBeTruthy();
-  });
-
-  it("accepts an integer well beyond the current 3-Moment journey without throwing — the sphere must not assume a fixed total", async () => {
-    const { getByText } = await render(<MomentSphere currentMoment={7} totalMoments={8} state="idle" />);
+  it("accepts any positive integer, including one well beyond the current 3-step journey, without throwing", async () => {
+    const { getByText, getByLabelText } = await render(<MomentSphere currentMoment={7} state="idle" />);
     expect(getByText("7")).toBeTruthy();
+    expect(getByLabelText("Journey step 7")).toBeTruthy();
+  });
+
+  it("renders the complete and thinking states without throwing", async () => {
+    const complete = await render(<MomentSphere currentMoment={3} state="complete" />);
+    expect(complete.getByLabelText("Journey step 3")).toBeTruthy();
+    const thinking = await render(<MomentSphere currentMoment={2} state="thinking" />);
+    expect(thinking.getByLabelText("Journey step 2")).toBeTruthy();
+  });
+
+  it("scales the numeral within the 48-64pt range depending on sphere size, never smaller or larger", async () => {
+    const small = await render(<MomentSphere currentMoment={3} state="idle" size={88} />);
+    const smallText = small.getByText("3");
+    const flatSmall = [smallText.props.style].flat();
+    const smallFontSize = flatSmall.find((s) => s && typeof s.fontSize === "number")?.fontSize;
+    expect(smallFontSize).toBeGreaterThanOrEqual(48);
+    expect(smallFontSize).toBeLessThanOrEqual(64);
+
+    const large = await render(<MomentSphere currentMoment={1} state="idle" size={140} />);
+    const largeText = large.getByText("1");
+    const flatLarge = [largeText.props.style].flat();
+    const largeFontSize = flatLarge.find((s) => s && typeof s.fontSize === "number")?.fontSize;
+    expect(largeFontSize).toBeGreaterThanOrEqual(48);
+    expect(largeFontSize).toBeLessThanOrEqual(64);
   });
 });

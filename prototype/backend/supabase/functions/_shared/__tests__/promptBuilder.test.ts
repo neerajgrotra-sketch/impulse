@@ -52,6 +52,32 @@ Deno.test("assembleInspirationPrompt — lists every canonical Life Dimension, n
   }
 });
 
+Deno.test("assembleInspirationPrompt — age-aware reasoning rule is included, verbatim, only when age is provided", () => {
+  const withAge = assembleInspirationPrompt({
+    firstName: "Nick",
+    age: 48,
+    becomingResponse: "I want to be healthy",
+    dimensionEnumValues: LIFE_DIMENSIONS,
+  });
+  assertStringIncludes(withAge.system, "Their age: 48.");
+  assertStringIncludes(
+    withAge.system,
+    "Age is weak contextual evidence, not a fact about the user's circumstances.",
+  );
+  assertStringIncludes(
+    withAge.system,
+    "Never infer family, parenthood, marital status, career seniority, health status, income, retirement, or priorities from age.",
+  );
+
+  const withoutAge = assembleInspirationPrompt({
+    firstName: "Nick",
+    becomingResponse: "I want to be healthy",
+    dimensionEnumValues: LIFE_DIMENSIONS,
+  });
+  assertEquals(withoutAge.system.includes("Their age:"), false);
+  assertEquals(withoutAge.system.includes("Age is weak contextual evidence"), false);
+});
+
 Deno.test("assembleOnboardingBeatPrompt — system prompt starts with the Constitution layer", () => {
   const { system } = assembleOnboardingBeatPrompt({
     firstName: "Sam",
@@ -163,6 +189,70 @@ Deno.test("assembleFinalSynthesisPrompt — a correction note is included and in
   });
   assertStringIncludes(userMessage, "this isn't about my career, it's about fitness");
   assertStringIncludes(userMessage, "do not invent new facts");
+});
+
+Deno.test("assembleFinalSynthesisPrompt — age-aware reasoning rule is included, verbatim, only when age is provided", () => {
+  const withAge = assembleFinalSynthesisPrompt({
+    firstName: "Nick",
+    age: 48,
+    becomingResponse: "I want to be healthy and lose weight",
+    visionCanvas: [{ text: "worth not measured by a number on a scale", source: "ai", edited: false }],
+  });
+  assertStringIncludes(withAge.system, "Their age: 48.");
+  assertStringIncludes(
+    withAge.system,
+    "Age is weak contextual evidence, not a fact about the user's circumstances.",
+  );
+  assertStringIncludes(
+    withAge.system,
+    "When age suggests a potentially relevant theme, express it as a question or uncertainty, not as a conclusion.",
+  );
+
+  const withoutAge = assembleFinalSynthesisPrompt({
+    firstName: "Nick",
+    becomingResponse: "I want to be healthy and lose weight",
+    visionCanvas: [{ text: "worth not measured by a number on a scale", source: "ai", edited: false }],
+  });
+  assertEquals(withoutAge.system.includes("Their age:"), false);
+  assertEquals(withoutAge.system.includes("Age is weak contextual evidence"), false);
+});
+
+Deno.test("assembleFinalSynthesisPrompt — interpretation field instructs second-person voice, never third person or by name", () => {
+  const { system } = assembleFinalSynthesisPrompt({
+    firstName: "Nick",
+    becomingResponse: "text",
+    visionCanvas: [{ text: "selected fragment", source: "ai", edited: false }],
+  });
+  assertStringIncludes(system, 'Address the person directly in second person ("you...")');
+  assertStringIncludes(system, "never in third person and never by name");
+  assertStringIncludes(system, "approximately 60-100 words");
+});
+
+// The physical-device UX review's own worked example (item 7) — used here
+// as a semantic FIXTURE for the prompt's inputs/instructions, never as a
+// hardcoded expected output (the actual generated text is the model's job,
+// not something a unit test can assert deterministically without a live
+// call — see docs/experiments/AE-001-postmortem-and-design-review.md Part 7
+// on why no golden-scenario harness exists yet for this surface).
+Deno.test("assembleFinalSynthesisPrompt — Nick/48/'losing weight' fixture: age rule, all fragments, and the person's exact original statement all reach the prompt", () => {
+  const { system, userMessage } = assembleFinalSynthesisPrompt({
+    firstName: "Nick",
+    age: 48,
+    becomingResponse: "I want to be healthy and lose weight",
+    visionCanvas: [
+      { text: "a healthier relationship with their body", source: "ai", edited: false },
+      { text: "worth not measured by a number on a scale", source: "ai", edited: false },
+      { text: "slow progress still counts", source: "ai", edited: false },
+      { text: "small daily shifts around food and movement", source: "ai", edited: false },
+    ],
+  });
+  assertStringIncludes(system, "Their age: 48.");
+  assertStringIncludes(system, "Age is weak contextual evidence");
+  assertStringIncludes(userMessage, "a healthier relationship with their body");
+  assertStringIncludes(userMessage, "worth not measured by a number on a scale");
+  assertStringIncludes(userMessage, "slow progress still counts");
+  assertStringIncludes(userMessage, "small daily shifts around food and movement");
+  assertStringIncludes(system, "I want to be healthy and lose weight");
 });
 
 Deno.test("assembleFinalSynthesisPrompt — omits the dismissed-thoughts and correction blocks when neither is supplied", () => {

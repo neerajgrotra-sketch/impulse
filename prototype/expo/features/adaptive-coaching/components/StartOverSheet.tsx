@@ -2,6 +2,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useAdaptiveCoachingStore } from "@/stores/adaptiveCoachingStore";
 import { colors, radius, spacing, typography } from "@/theme";
 import { logTelemetryEvent } from "@/utils/telemetry";
+import { BuildBadge } from "./BuildBadge";
 
 type StartOverSheetProps = {
   visible: boolean;
@@ -29,6 +30,10 @@ export function StartOverSheet({ visible, onClose }: StartOverSheetProps) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      {/* Modal renders in its own native layer above the coordinator-level
+          BuildBadge — rendered again here so it stays visible on this
+          sheet too (item 9). */}
+      <BuildBadge />
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Dismiss" accessibilityRole="button" />
       <View style={styles.sheet}>
         <Pressable

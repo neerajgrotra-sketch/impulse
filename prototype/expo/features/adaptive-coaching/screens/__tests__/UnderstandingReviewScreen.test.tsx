@@ -60,11 +60,15 @@ describe("UnderstandingReviewScreen", () => {
 
     const { getByText } = await renderScreen();
 
-    await waitFor(() => expect(getByText("Here’s what I think you mean")).toBeTruthy());
-    expect(getByText(GOOD_REVIEW.headline)).toBeTruthy();
-    expect(getByText(GOOD_REVIEW.coreAspiration)).toBeTruthy();
+    await waitFor(() => expect(getByText("Maya, I hear you.")).toBeTruthy());
+    // headline/coreAspiration remain in the response schema (a backend
+    // concern left untouched) but are no longer rendered on this
+    // redesigned screen — the hero card leads with identityStatement.
     expect(getByText(GOOD_REVIEW.interpretation)).toBeTruthy();
     expect(getByText(GOOD_REVIEW.identityStatement)).toBeTruthy();
+    expect(getByText("THE PERSON YOU ARE BECOMING")).toBeTruthy();
+    expect(getByText("WHAT SEEMS TO MATTER UNDERNEATH")).toBeTruthy();
+    expect(getByText("SOMETHING I STILL DON’T KNOW")).toBeTruthy();
     expect(getByText("Self-defined success")).toBeTruthy();
     expect(getByText(GOOD_REVIEW.uncertainties[0])).toBeTruthy();
   });
@@ -74,7 +78,7 @@ describe("UnderstandingReviewScreen", () => {
 
     const { getByLabelText, queryByText } = await renderScreen();
     await waitFor(() => expect(getByLabelText("Retry building your understanding review")).toBeTruthy());
-    expect(queryByText("Here’s what I think you mean")).toBeNull();
+    expect(queryByText("Maya, I hear you.")).toBeNull();
   });
 
   it("Retry re-fires the request after a failure", async () => {
@@ -91,7 +95,7 @@ describe("UnderstandingReviewScreen", () => {
     await waitFor(() => expect(getByLabelText("Retry building your understanding review")).toBeTruthy());
     await fireEvent.press(getByLabelText("Retry building your understanding review"));
 
-    await waitFor(() => expect(getByText(GOOD_REVIEW.headline)).toBeTruthy());
+    await waitFor(() => expect(getByText(GOOD_REVIEW.identityStatement)).toBeTruthy());
     expect(mockRequestFinalSynthesis).toHaveBeenCalledTimes(2);
   });
 
@@ -118,7 +122,7 @@ describe("UnderstandingReviewScreen", () => {
       promptVersion: "final-synthesis-v1",
       latencyMs: 1000,
     });
-    const revised = { ...GOOD_REVIEW, headline: "A revised headline" };
+    const revised = { ...GOOD_REVIEW, identityStatement: "Someone who redefined the goal around fitness, not career." };
     mockRequestFinalSynthesis.mockResolvedValueOnce({
       safety: { tier: "none", hardStop: false },
       understanding: revised,
@@ -128,15 +132,15 @@ describe("UnderstandingReviewScreen", () => {
     });
 
     const { getByLabelText, getByText } = await renderScreen();
-    await waitFor(() => expect(getByText(GOOD_REVIEW.headline)).toBeTruthy());
+    await waitFor(() => expect(getByText(GOOD_REVIEW.identityStatement)).toBeTruthy());
 
     await fireEvent.press(getByLabelText("Adjust my understanding"));
-    await fireEvent.changeText(getByLabelText("What doesn’t feel right?"), "this is about fitness, not career");
+    await fireEvent.changeText(getByLabelText("What did I misunderstand?"), "this is about fitness, not career");
     await act(async () => {
-      fireEvent.press(getByLabelText("Regenerate"));
+      fireEvent.press(getByLabelText("Update my understanding"));
     });
 
-    await waitFor(() => expect(getByText("A revised headline")).toBeTruthy());
+    await waitFor(() => expect(getByText(revised.identityStatement)).toBeTruthy());
     expect(mockRequestFinalSynthesis).toHaveBeenCalledTimes(2);
     expect(mockRequestFinalSynthesis.mock.calls[1][0]).toMatchObject({ correctionNote: "this is about fitness, not career" });
   });
