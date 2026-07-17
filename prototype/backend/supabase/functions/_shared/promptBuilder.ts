@@ -185,3 +185,50 @@ Produce exactly these fields:
     userMessage: fenceAsContent("the person's selected Vision Canvas fragments", fragmentLines) + dismissedBlock + correctionBlock,
   };
 }
+
+export interface AdaptiveQuestionTurnInput {
+  question: string;
+  answer: string;
+}
+
+export interface AdaptiveQuestionPromptInput {
+  firstName: string;
+  becomingResponse: string;
+  history: AdaptiveQuestionTurnInput[];
+}
+
+/** Layers 1+2+4 for the adaptive-questioning engine's turn — the
+ *  architecture the founder-reviewed postmortem's "Option B/C" direction
+ *  named (docs/experiments/AE-001-postmortem-and-design-review.md Part 3,
+ *  Part 6), built now as real, working infrastructure rather than a design
+ *  doc: one good curious follow-up question at a time, grounded in what's
+ *  actually been said so far, instead of generating 8 identity statements
+ *  from a single answer. Same Observed/Inferred/Unknown discipline
+ *  `assembleOnboardingBeatPrompt` already applies, extended one step
+ *  earlier — this turn's whole job is to REDUCE "unknown," not to generate
+ *  finished content. */
+export function assembleAdaptiveQuestionPrompt(input: AdaptiveQuestionPromptInput): AssembledPrompt {
+  const layer1Task = `Your task: this is one step in an ongoing, curious conversation trying to understand who this person is becoming — never a content-generation task. Read their original answer and everything asked/answered so far, then:
+
+1. Update a psychological_state record with exactly three arrays: "observed" (only what was directly stated — verbatim-derived, not inferred), "inferred" (each entry an object with a "statement" and a "confidence" 0-1, only things reasonably read between the lines), and "unknown" (named genuine gaps still worth asking about).
+2. Ask exactly ONE good next question — warm and genuinely curious, never clinical or a form field ("When you imagine succeeding, what excites you the most?" is the right register; "What is your primary motivation?" is not). The question should target the single most useful remaining "unknown," never re-ask something already covered in observed/inferred.
+3. Offer 3-5 short answer options (2-6 words each) — genuinely different plausible directions a person might mean, never generic filler ("good," "better," "other"), never 8 uniformly-confident options. Each option must be something a real person answering this specific question might actually pick, grounded in the conversation so far, not an arbitrary menu.
+4. Decide allow_free_text — almost always true, since the options are a starting point for tapping, never the only way to answer.
+5. Decide done — true once you genuinely have enough to move to a synthesized understanding (few or no meaningful "unknown" entries remain, or the conversation has covered enough ground that another question would not add real signal), false otherwise. When done is true, question/options should still be schema-valid but are ignored by the caller; set done_reason to a short internal note (never shown to the user) explaining why; leave it as an empty string when done is false.
+
+Never invent a memory, never assign an identity they haven't earned yet, never ask two questions at once, never phrase a question in a way that presumes the answer.`;
+
+  const historyBlock =
+    input.history.length > 0
+      ? input.history.map((turn, i) => `Q${i + 1}: ${turn.question}\nA${i + 1}: ${turn.answer}`).join("\n\n")
+      : "(no follow-up questions asked yet — this is the first one)";
+
+  const layer2 = `Person's name: ${input.firstName || "the user"}. ${input.history.length} follow-up question(s) asked so far.`;
+
+  const layer4 = `Their original answer to "Who are you becoming?" was: ${fenceAsContent("their original answer", input.becomingResponse)}\n\nThe conversation since then — this is what your next question must build on, never repeat:`;
+
+  return {
+    system: [CONSTITUTION_LAYER, layer1Task, layer2, layer4].join("\n\n"),
+    userMessage: fenceAsContent("the follow-up questions asked and this person's own answers", historyBlock),
+  };
+}

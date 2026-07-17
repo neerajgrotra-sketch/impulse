@@ -21,6 +21,12 @@
 // (matches generate-blueprint's existing convention — see prototype/backend/README.md
 // for the caveat that --no-verify-jwt must not carry over to anything handling
 // real persisted user data; this endpoint persists nothing.)
+import {
+  AdaptiveInterviewError,
+  chooseNextQuestion as realChooseNextQuestion,
+  type NextQuestionInput,
+  type NextQuestionResult,
+} from "../_shared/adaptiveInterviewEngine.ts";
 import { MODEL } from "../_shared/anthropicClient.ts";
 import {
   chooseOnboardingBeat as realChooseOnboardingBeat,
@@ -71,7 +77,19 @@ interface FinalSynthesisRequest {
   correction_note?: string;
 }
 
-type OnboardingTurnRequest = InspirationRequest | OnboardingBeatRequest | FinalSynthesisRequest;
+/** The adaptive-questioning engine's turn — architecture authorized ahead of
+ *  a full onboarding re-choreography (see adaptiveInterviewEngine.ts's own
+ *  header comment). Not currently called by any shipped screen; exists so a
+ *  future adaptive-interview UI has a real, tested backend turn to call
+ *  rather than inventing one from scratch. */
+interface AdaptiveQuestionRequest {
+  turn_type: "adaptive_question";
+  first_name?: string;
+  becoming_response: string;
+  history: { question: string; answer: string }[];
+}
+
+type OnboardingTurnRequest = InspirationRequest | OnboardingBeatRequest | FinalSynthesisRequest | AdaptiveQuestionRequest;
 
 /** Every external effect this handler needs, injectable for tests — the
  *  golden/red-team eval set exercises the real routing/safety/validation
@@ -82,6 +100,7 @@ export interface OnboardingTurnDeps {
   generateInspiration: (input: GenerateInspirationInput) => Promise<InspirationResult>;
   chooseOnboardingBeat: (input: ChooseBeatInput) => Promise<OnboardingBeatResult>;
   synthesizeUnderstanding: (input: SynthesizeUnderstandingInput) => Promise<UnderstandingReview>;
+  chooseNextQuestion: (input: NextQuestionInput) => Promise<NextQuestionResult>;
 }
 
 const defaultDeps: OnboardingTurnDeps = {
@@ -89,13 +108,17 @@ const defaultDeps: OnboardingTurnDeps = {
   generateInspiration: realGenerateInspiration,
   chooseOnboardingBeat: realChooseOnboardingBeat,
   synthesizeUnderstanding: realSynthesizeUnderstanding,
+  chooseNextQuestion: realChooseNextQuestion,
 };
 
-function jsonError(message: string, status: number, requestId?: string): Response {
-  return new Response(JSON.stringify({ error: message, request_id: requestId ?? null }), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+function jsonError(message: string, status: number, requestId?: string, errorCategory?: string): Response {
+  return new Response(
+    JSON.stringify({ error: message, request_id: requestId ?? null, error_category: errorCategory ?? null }),
+    {
+      status,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 function jsonOk(body: Record<string, unknown>): Response {
@@ -153,10 +176,28 @@ function isValidFinalSynthesisRequest(body: unknown): body is FinalSynthesisRequ
   return true;
 }
 
-/** IdentityEngineError's category maps to an honest HTTP status: a real
- *  provider-budget timeout is 504 (the client's own timer will usually
+function isValidAdaptiveQuestionRequest(body: unknown): body is AdaptiveQuestionRequest {
+  if (typeof body !== "object" || body === null) return false;
+  const b = body as Record<string, unknown>;
+  if (b.turn_type !== "adaptive_question") return false;
+  if (typeof b.becoming_response !== "string" || b.becoming_response.trim().length === 0) return false;
+  if (!Array.isArray(b.history)) return false;
+  return b.history.every(
+    (t) => typeof (t as { question?: unknown }).question === "string" && typeof (t as { answer?: unknown }).answer === "string",
+  );
+}
+
+/** Shared by IdentityEngineError, CoachEngineError, and AdaptiveInterviewError's
+ *  categories: a real provider-budget timeout is 504 (the client's own timer will usually
  *  fire first anyway, but a slightly-slower client or a retry-after-abort
- *  race should still see the true reason), everything else is 502. */
+ *  race should still see the true reason), everything else — including
+ *  "overloaded" — is 502. "overloaded" is deliberately NOT mapped to 503:
+ *  this endpoint already uses 503 for a completely different meaning
+ *  (safety-classification infra failure, "please try again"), and reusing
+ *  it here would blur two different failure modes behind one status code.
+ *  Callers that need to distinguish "provider is overloaded" from "we have
+ *  a bug" read the response body's `error_category` field instead, which
+ *  `jsonError` always includes. */
 function statusForErrorCategory(category: string): number {
   return category === "timeout" ? 504 : 502;
 }
@@ -193,7 +234,7 @@ async function handleInspirationGeneration(
       error_category: category,
       over_budget: Date.now() - start > SERVER_TOTAL_BUDGET_MS,
     });
-    return jsonError(message, statusForErrorCategory(category), requestId);
+    return jsonError(message, statusForErrorCategory(category), requestId, category);
   }
 
   const action = mapTierToAction(result.safety.tier);
@@ -276,7 +317,9 @@ async function handleOnboardingBeat(
       visionCanvas: payload.vision_canvas,
     });
   } catch (err) {
-    if (err instanceof CoachEngineError) return jsonError(err.message, 502, requestId);
+    if (err instanceof CoachEngineError) {
+      return jsonError(err.message, statusForErrorCategory(err.category), requestId, err.category);
+    }
     return jsonError("unexpected error while choosing the next coaching beat", 502, requestId);
   }
 
@@ -357,7 +400,9 @@ async function handleFinalSynthesis(
       correctionNote: payload.correction_note,
     });
   } catch (err) {
-    if (err instanceof CoachEngineError) return jsonError(err.message, 502, requestId);
+    if (err instanceof CoachEngineError) {
+      return jsonError(err.message, statusForErrorCategory(err.category), requestId, err.category);
+    }
     return jsonError("unexpected error while synthesizing the understanding review", 502, requestId);
   }
 
@@ -389,6 +434,89 @@ async function handleFinalSynthesis(
     },
     request_id: requestId,
     prompt_version: "final-synthesis-v1",
+    latency_ms: Date.now() - start,
+  });
+}
+
+/** The adaptive-questioning engine's turn — not currently reachable from any
+ *  shipped screen (see this file's own `AdaptiveQuestionRequest` doc
+ *  comment). Follows the exact same safety-first shape every other turn in
+ *  this handler does: classify inbound content unconditionally, hard-stop
+ *  short-circuits before the engine ever runs, then a second outbound
+ *  re-check on the generated question/options before they ever reach a
+ *  response. */
+async function handleAdaptiveQuestion(
+  payload: AdaptiveQuestionRequest,
+  deps: OnboardingTurnDeps,
+  requestId: string,
+): Promise<Response> {
+  if (!isValidAdaptiveQuestionRequest(payload)) {
+    return jsonError("becoming_response is required and history must be an array of {question, answer}", 400, requestId);
+  }
+
+  const textToScreen = [payload.becoming_response, ...payload.history.map((t) => t.answer)].join("\n");
+
+  let safety: SafetyClassification;
+  try {
+    safety = await deps.classifyRisk(textToScreen);
+  } catch (err) {
+    if (err instanceof SafetyClassificationError) {
+      return jsonError("safety_check_failed: please try again", 503, requestId);
+    }
+    return jsonError("unexpected error during safety screening", 502, requestId);
+  }
+
+  const action = mapTierToAction(safety.tier);
+  if (action.hardStop) {
+    return jsonOk(hardStopBody(safety.tier as "elevated" | "crisis", requestId));
+  }
+
+  const start = Date.now();
+  let result: NextQuestionResult;
+  try {
+    result = await deps.chooseNextQuestion({
+      firstName: payload.first_name ?? "",
+      becomingResponse: payload.becoming_response,
+      history: payload.history,
+    });
+  } catch (err) {
+    if (err instanceof AdaptiveInterviewError) {
+      return jsonError(err.message, statusForErrorCategory(err.category), requestId, err.category);
+    }
+    return jsonError("unexpected error while choosing the next question", 502, requestId);
+  }
+
+  // done:true means the engine short-circuited (turn ceiling) or the model
+  // signaled enough is understood — question/options are meaningless in
+  // that case (never generated, or ignored), so there is nothing to
+  // outbound-screen; only re-check when there's real generated text.
+  if (!result.done) {
+    let outboundSafety: SafetyClassification;
+    try {
+      outboundSafety = await deps.classifyRisk([result.question, ...result.options].join("\n"));
+    } catch {
+      return jsonError("safety_check_failed: please try again", 503, requestId);
+    }
+    const outboundAction = mapTierToAction(outboundSafety.tier);
+    if (outboundAction.hardStop) {
+      return jsonOk(hardStopBody(outboundSafety.tier as "elevated" | "crisis", requestId));
+    }
+  }
+
+  return jsonOk({
+    safety: { tier: safety.tier, hard_stop: false },
+    psychological_state: {
+      observed: result.psychologicalState.observed,
+      inferred: result.psychologicalState.inferred,
+      unknown: result.psychologicalState.unknown,
+    },
+    question: result.question,
+    options: result.options,
+    allow_free_text: result.allowFreeText,
+    done: result.done,
+    done_reason: result.doneReason,
+    request_id: requestId,
+    prompt_version: "adaptive-question-v1",
     latency_ms: Date.now() - start,
   });
 }
@@ -425,6 +553,10 @@ export async function handleOnboardingTurn(req: Request, deps: OnboardingTurnDep
 
   if (payload.turn_type === "final_synthesis") {
     return handleFinalSynthesis(payload, deps, requestId);
+  }
+
+  if (payload.turn_type === "adaptive_question") {
+    return handleAdaptiveQuestion(payload, deps, requestId);
   }
 
   return jsonError("unknown turn_type", 400, requestId);

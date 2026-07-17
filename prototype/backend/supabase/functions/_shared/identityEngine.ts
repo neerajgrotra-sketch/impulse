@@ -91,6 +91,7 @@ export interface InspirationResult {
  *  everything else) instead of collapsing every failure into one code. */
 export type IdentityEngineErrorCategory =
   | "timeout"
+  | "overloaded"
   | "refusal"
   | "malformed_json"
   | "incomplete_or_invalid"
@@ -225,7 +226,25 @@ function categorizeCallError(err: unknown): IdentityEngineErrorCategory {
   // so it's checked first (order matters).
   if (err instanceof Anthropic.APIConnectionTimeoutError) return "timeout";
   if (err instanceof Anthropic.APIConnectionError) return "network";
+  // The fix this file's own postmortem (Part 1) named as "the single
+  // highest-leverage, cheapest fix available" and never actually shipped: a
+  // 529 is an `Anthropic.InternalServerError` (any status >= 500),
+  // distinguished from a generic 5xx via the SDK's own parsed `.type` field
+  // — not the same as "we have a bug," and no longer collapsed into
+  // "unknown" the way it silently was before.
+  if (err instanceof Anthropic.InternalServerError && err.type === "overloaded_error") return "overloaded";
   return "unknown";
+}
+
+// 300-900ms — this file's own postmortem's recommended range for the
+// backoff an "overloaded" retry was missing entirely: an immediate retry
+// straight back into a provider that just said "I'm overloaded" wastes the
+// one bounded retry this loop has on a near-certain repeat failure.
+const OVERLOAD_BACKOFF_BASE_MS = 300;
+const OVERLOAD_BACKOFF_JITTER_MS = 600;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // effort "low" — chosen by direct measurement against the live endpoint,
@@ -307,6 +326,13 @@ export async function generateInspiration(
           category,
           `inspiration generation failed: ${err instanceof Error ? err.message : String(err)}`,
         );
+      }
+      // The provider just said "I'm overloaded" — retrying immediately into
+      // the same condition is exactly what let a transient capacity blip
+      // read as a hard product failure. A short jittered backoff gives it a
+      // real chance to clear before the one bounded retry is spent.
+      if (category === "overloaded") {
+        await sleep(OVERLOAD_BACKOFF_BASE_MS + Math.random() * OVERLOAD_BACKOFF_JITTER_MS);
       }
       continue;
     }

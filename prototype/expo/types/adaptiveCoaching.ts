@@ -110,6 +110,37 @@ export type HardStopResponse = {
   requestId: string;
 };
 
+/** One exchange in the adaptive-questioning engine's conversation — the
+ *  architecture the AE-001 postmortem's "Option B/C" direction named
+ *  (docs/experiments/AE-001-postmortem-and-design-review.md Part 3, Part 6),
+ *  built now as real backend infrastructure ahead of a full onboarding
+ *  re-choreography. Not currently rendered by any shipped screen — see
+ *  `requestNextQuestion` in services/onboardingTurnApi.ts. */
+export type AdaptiveQuestionTurn = {
+  question: string;
+  answer: string;
+};
+
+export type AdaptiveQuestionResponse = {
+  safety: { tier: SafetyTier; hardStop: false };
+  psychologicalState: PsychologicalState;
+  /** Empty when `done` is true (nothing further to ask). */
+  question: string;
+  /** 3-5 short, concretely differentiated answer directions — never an
+   *  8-item uniformly-confident menu. Empty when `done` is true. */
+  options: string[];
+  allowFreeText: boolean;
+  /** True once the engine has enough understanding to move to
+   *  synthesizeUnderstanding's final review — either the model's own
+   *  judgment, or the code-enforced turn ceiling (adaptiveInterviewEngine.ts's
+   *  MAX_ADAPTIVE_TURNS). */
+  done: boolean;
+  doneReason: string;
+  requestId: string;
+  promptVersion: string;
+  latencyMs: number;
+};
+
 /**
  * The adaptive-coaching phase machine — a separate, isolated store from
  * `stores/onboardingStore.ts`'s already-shipped PDR-0006 flow (AE-001 is a

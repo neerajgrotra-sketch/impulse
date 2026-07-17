@@ -137,15 +137,17 @@ export function UnderstandingReviewScreen() {
 
         {isLoading && (
           <View style={styles.loadingWrap}>
-            {elapsedState === "delayed" && (
-              <Text style={[typography.caption, styles.statusText]}>Good understanding takes a little longer — still working…</Text>
-            )}
+            <Text style={[typography.caption, styles.statusText]}>
+              {elapsedState === "delayed"
+                ? "I'm still working on it. This can occasionally take a little longer."
+                : "I'm putting everything you've shared together…"}
+            </Text>
           </View>
         )}
 
         {isFailed && (
           <View style={styles.recoveryPanel}>
-            <Text style={[typography.bodySecondary, styles.recoveryText]}>This is taking longer than it should.</Text>
+            <Text style={[typography.bodySecondary, styles.recoveryText]}>I wasn’t able to finish putting this together.</Text>
             <Pressable onPress={handleRetry} hitSlop={8} accessibilityRole="button" accessibilityLabel="Retry building your understanding review">
               <Text style={[typography.body, styles.recoveryAction]}>Retry</Text>
             </Pressable>

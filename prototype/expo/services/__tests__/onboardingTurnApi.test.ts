@@ -4,6 +4,7 @@ import {
   requestCoachingBeat,
   requestFinalSynthesis,
   requestInspiration,
+  requestNextQuestion,
   toCalmUserMessage,
 } from "@/services/onboardingTurnApi";
 
@@ -188,6 +189,84 @@ describe("onboardingTurnApi", () => {
     if (isHardStopResponse(result)) {
       expect(result.safety.tier).toBe("crisis");
     }
+  });
+
+  it("requestNextQuestion parses a successful next-question response", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({
+        safety: { tier: "none", hard_stop: false },
+        psychological_state: { observed: ["wants to be healthier"], inferred: [], unknown: ["what success feels like"] },
+        question: "When you imagine succeeding, what excites you the most?",
+        options: ["Feeling confident again", "Having more energy", "Being there for my family"],
+        allow_free_text: true,
+        done: false,
+        done_reason: "",
+        request_id: "req-adaptive-1",
+        prompt_version: "adaptive-question-v1",
+        latency_ms: 640,
+      })
+    );
+
+    const result = await requestNextQuestion({
+      firstName: "Maya",
+      becomingResponse: "I want to lose weight and be healthy",
+      history: [],
+    });
+    expect(isHardStopResponse(result)).toBe(false);
+    if (!isHardStopResponse(result)) {
+      expect(result.question).toBe("When you imagine succeeding, what excites you the most?");
+      expect(result.options).toHaveLength(3);
+      expect(result.done).toBe(false);
+      expect(result.psychologicalState.unknown).toEqual(["what success feels like"]);
+    }
+  });
+
+  it("requestNextQuestion parses a done:true response with no further question", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({
+        safety: { tier: "none", hard_stop: false },
+        psychological_state: { observed: [], inferred: [], unknown: [] },
+        question: "",
+        options: [],
+        allow_free_text: false,
+        done: true,
+        done_reason: "reached the turn ceiling",
+        request_id: "req-adaptive-2",
+        prompt_version: "adaptive-question-v1",
+        latency_ms: 0,
+      })
+    );
+
+    const result = await requestNextQuestion({ firstName: "Maya", becomingResponse: "text", history: [] });
+    expect(isHardStopResponse(result)).toBe(false);
+    if (!isHardStopResponse(result)) {
+      expect(result.done).toBe(true);
+      expect(result.doneReason).toBe("reached the turn ceiling");
+    }
+  });
+
+  it("requestNextQuestion parses a hard-stop response distinctly", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({
+        safety: { tier: "crisis", hard_stop: true, message: "please reach out to someone" },
+        request_id: "req-crisis",
+      })
+    );
+
+    const result = await requestNextQuestion({ firstName: "Maya", becomingResponse: "text", history: [] });
+    expect(isHardStopResponse(result)).toBe(true);
+    if (isHardStopResponse(result)) {
+      expect(result.safety.tier).toBe("crisis");
+    }
+  });
+
+  it("requestNextQuestion maps an overloaded error_category to kind 'overloaded', distinct from a generic server error", async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({ error: "adaptive-question generation failed: 529 Overloaded", request_id: "req-ovl", error_category: "overloaded" }, 502)
+    );
+    await expect(requestNextQuestion({ firstName: "Maya", becomingResponse: "text", history: [] })).rejects.toMatchObject({
+      kind: "overloaded",
+    });
   });
 
   it("throws a config error when Supabase env vars are missing", async () => {

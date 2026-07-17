@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from "react-native";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { BreathingOrb } from "./BreathingOrb";
 import type { VoiceOrbState } from "./VoiceOrb";
 import { colors, typography } from "@/theme";
@@ -7,7 +8,11 @@ type MomentSphereState = "idle" | "thinking" | "complete";
 
 type MomentSphereProps = {
   currentMoment: number;
-  totalMoments: number;
+  /** Only used to build the accessibility label ("Moment X of Y") — never
+   *  shown visually. Omit it once a journey's length is genuinely open-ended
+   *  (the adaptive interview will not know its own total moment count up
+   *  front); the label falls back to "Moment X" alone. */
+  totalMoments?: number;
   state: MomentSphereState;
   /** Passthrough overrides for BreathingOrb's richer sub-states, so screens
    *  that already distinguish listening/typing/error don't lose that nuance
@@ -26,11 +31,19 @@ type MomentSphereProps = {
 };
 
 /**
- * Wraps BreathingOrb (left unmodified) with a centered "MOMENT X of Y"
- * overlay — pure text on top of the orb's existing animated layers, so it
- * never touches BreathingOrb's shared values or timing. One reusable sphere
- * for every AE-001 screen; screens read their Moment number from
+ * Wraps BreathingOrb (left unmodified) with a centered Moment-number overlay
+ * — pure text on top of the orb's existing animated layers, so it never
+ * touches BreathingOrb's shared values or timing. One reusable sphere for
+ * every AE-001 screen; screens read their Moment number from
  * `features/adaptive-coaching/journey.ts` rather than hardcoding it.
+ *
+ * Redesigned from an earlier "MOMENT / X of Y" treatment (small, low-contrast,
+ * and it baked in a total the adaptive interview won't always have) to a
+ * single dominant number with a small "Moment" caption underneath — the
+ * number is what a user should be able to read at a glance, the total isn't
+ * shown at all. The number crossfades between Moments (keyed by
+ * `currentMoment`, so React unmounts/remounts the `Animated.Text` and its
+ * entering/exiting transition fires), skipped entirely under Reduce Motion.
  */
 export function MomentSphere({
   currentMoment,
@@ -55,17 +68,15 @@ export function MomentSphere({
             ? "finished"
             : "idle";
 
+  const accessibilityLabel = totalMoments ? `Moment ${currentMoment} of ${totalMoments}` : `Moment ${currentMoment}`;
+
   return (
     // `accessible` + `accessibilityLabel` on this container is sufficient on
     // its own — RN groups the whole subtree into one VoiceOver/TalkBack-
     // focusable unit reading only this label; BreathingOrb's own root is
     // already `accessible={false}` (its own component), so nothing beneath
     // this View is independently announced.
-    <View
-      accessible
-      accessibilityLabel={`Moment ${currentMoment} of ${totalMoments}`}
-      style={styles.wrap}
-    >
+    <View accessible accessibilityLabel={accessibilityLabel} style={styles.wrap}>
       <BreathingOrb
         state={orbState}
         listening={listening}
@@ -74,10 +85,15 @@ export function MomentSphere({
         size={size}
       />
       <View pointerEvents="none" style={styles.overlay}>
-        <Text style={[typography.caption, styles.label]}>MOMENT</Text>
-        <Text style={[typography.bodySecondary, styles.number]}>
-          {currentMoment} of {totalMoments}
-        </Text>
+        <Animated.Text
+          key={currentMoment}
+          entering={reduceMotion ? undefined : FadeIn.duration(220)}
+          exiting={reduceMotion ? undefined : FadeOut.duration(160)}
+          style={styles.number}
+        >
+          {currentMoment}
+        </Animated.Text>
+        <Text style={[typography.caption, styles.label]}>Moment</Text>
       </View>
     </View>
   );
@@ -96,15 +112,15 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: "center",
     justifyContent: "center",
-    gap: 2,
-  },
-  label: {
-    letterSpacing: 1.4,
-    color: colors.inkSecondary,
-    fontSize: 10,
   },
   number: {
+    fontSize: 44,
+    lineHeight: 50,
+    fontWeight: "700",
     color: colors.ink,
-    fontWeight: "600",
+  },
+  label: {
+    marginTop: 2,
+    color: colors.inkSecondary,
   },
 });

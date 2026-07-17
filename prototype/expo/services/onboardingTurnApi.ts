@@ -1,4 +1,6 @@
 import type {
+  AdaptiveQuestionResponse,
+  AdaptiveQuestionTurn,
   CoachingBeat,
   CoachingMove,
   FinalSynthesisResponse,
@@ -61,7 +63,19 @@ const ONBOARDING_BEAT_TIMEOUT_MS = 120_000;
 // — same generous budget, not a new number to justify.
 const FINAL_SYNTHESIS_TIMEOUT_MS = 120_000;
 
-export type OnboardingTurnApiErrorKind = "config" | "network" | "timeout" | "aborted" | "server" | "invalid-response";
+// adaptive_question is a single "medium effort" call, lighter than
+// final_synthesis's — 60s leaves real margin over
+// adaptiveInterviewEngine.ts's own 45s provider budget.
+const ADAPTIVE_QUESTION_TIMEOUT_MS = 60_000;
+
+export type OnboardingTurnApiErrorKind =
+  | "config"
+  | "network"
+  | "timeout"
+  | "overloaded"
+  | "aborted"
+  | "server"
+  | "invalid-response";
 
 export class OnboardingTurnApiError extends Error {
   readonly kind: OnboardingTurnApiErrorKind;
@@ -91,7 +105,7 @@ if (__DEV__ && !readConfig()) {
   );
 }
 
-function isErrorPayload(value: unknown): value is { error: string } {
+function isErrorPayload(value: unknown): value is { error: string; error_category?: unknown } {
   return typeof value === "object" && value !== null && isNonEmptyString((value as Record<string, unknown>).error);
 }
 
@@ -145,11 +159,19 @@ async function postOnboardingTurn(
 
   if (!response.ok) {
     const message = isErrorPayload(rawBody) ? rawBody.error : `Request failed with status ${response.status}.`;
-    // A 504 is the server's own honest "I hit my timeout budget" signal
-    // (identityEngine.ts's 8s budget) — surfaced as `kind: "timeout"` so
-    // callers show the same recovery UI as a client-side abort, not a
-    // generic "server error" message for what is, behaviorally, a timeout.
-    throw new OnboardingTurnApiError(response.status === 504 ? "timeout" : "server", message);
+    // The backend embeds a structured `error_category` in every error body
+    // (onboarding-turn/index.ts's `jsonError`) precisely so a transient
+    // provider-capacity issue never has to be inferred from an HTTP status
+    // code shared with unrelated meanings (503 is already "safety check
+    // infra failed" here) — read it directly instead of guessing from
+    // `response.status` alone.
+    const category = isErrorPayload(rawBody) && isNonEmptyString(rawBody.error_category) ? rawBody.error_category : null;
+    // A 504 is the server's own honest "I hit my timeout budget" signal —
+    // surfaced as `kind: "timeout"` so callers show the same recovery UI as
+    // a client-side abort, not a generic "server error" message for what is,
+    // behaviorally, a timeout.
+    const kind = category === "overloaded" ? "overloaded" : response.status === 504 ? "timeout" : "server";
+    throw new OnboardingTurnApiError(kind, message);
   }
 
   return rawBody;
@@ -314,6 +336,40 @@ function parseFinalSynthesisResponse(raw: unknown): FinalSynthesisResponse | Har
   };
 }
 
+function parseAdaptiveQuestionResponse(raw: unknown): AdaptiveQuestionResponse | HardStopResponse {
+  if (typeof raw !== "object" || raw === null) {
+    throw new OnboardingTurnApiError("invalid-response", "Response was not an object.");
+  }
+  const body = raw as Record<string, unknown>;
+  const safety = body.safety as Record<string, unknown> | undefined;
+  if (typeof safety !== "object" || safety === null) {
+    throw new OnboardingTurnApiError("invalid-response", "Response is missing safety information.");
+  }
+
+  const hardStop = parseHardStop(body, safety);
+  if (hardStop) return hardStop;
+
+  if (!isValidSafetyTier(safety.tier)) {
+    throw new OnboardingTurnApiError("invalid-response", "Response has an invalid safety tier.");
+  }
+  if (typeof body.question !== "string" || !Array.isArray(body.options) || typeof body.done !== "boolean") {
+    throw new OnboardingTurnApiError("invalid-response", "Response is missing question/options/done.");
+  }
+
+  return {
+    safety: { tier: safety.tier, hardStop: false },
+    psychologicalState: parsePsychologicalState(body.psychological_state),
+    question: body.question,
+    options: body.options as string[],
+    allowFreeText: body.allow_free_text === true,
+    done: body.done,
+    doneReason: String(body.done_reason ?? ""),
+    requestId: String(body.request_id ?? ""),
+    promptVersion: String(body.prompt_version ?? ""),
+    latencyMs: Number(body.latency_ms ?? 0),
+  };
+}
+
 /**
  * A discriminated-union type guard is needed here because the discriminant
  * (`hardStop`) lives on a nested `safety` property, one level below the
@@ -321,7 +377,7 @@ function parseFinalSynthesisResponse(raw: unknown): FinalSynthesisResponse | Har
  * top-level discriminant, so `result.safety.hardStop` alone won't narrow
  * `result`. This function is the one place that does. */
 export function isHardStopResponse(
-  result: InspirationResponse | OnboardingBeatResponse | FinalSynthesisResponse | HardStopResponse
+  result: InspirationResponse | OnboardingBeatResponse | FinalSynthesisResponse | AdaptiveQuestionResponse | HardStopResponse
 ): result is HardStopResponse {
   return result.safety.hardStop === true;
 }
@@ -388,6 +444,31 @@ export async function requestFinalSynthesis(
     options?.signal
   );
   return parseFinalSynthesisResponse(raw);
+}
+
+/**
+ * The adaptive-questioning engine's client call — architecture built ahead
+ * of a full onboarding re-choreography (see adaptiveInterviewEngine.ts's own
+ * header comment on the backend). Not called by any shipped screen yet; a
+ * future adaptive-interview UI calls this in a loop (feeding each turn's
+ * `question`/selected-or-typed answer back in as `history`) until the
+ * response's `done` is true, then hands off to `requestFinalSynthesis`.
+ */
+export async function requestNextQuestion(
+  input: { firstName: string; becomingResponse: string; history: AdaptiveQuestionTurn[] },
+  options?: { signal?: AbortSignal }
+): Promise<AdaptiveQuestionResponse | HardStopResponse> {
+  const raw = await postOnboardingTurn(
+    {
+      turn_type: "adaptive_question",
+      first_name: input.firstName,
+      becoming_response: input.becomingResponse,
+      history: input.history,
+    },
+    ADAPTIVE_QUESTION_TIMEOUT_MS,
+    options?.signal
+  );
+  return parseAdaptiveQuestionResponse(raw);
 }
 
 /** Never surface `err.message` directly — mirrors `blueprintApi.ts`'s own

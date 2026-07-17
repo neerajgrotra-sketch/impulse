@@ -6,6 +6,7 @@
 // prerequisite for the experiment to run at all, even moderated.
 import { assertEquals } from "@std/assert";
 import { handleOnboardingTurn, type OnboardingTurnDeps } from "../index.ts";
+import { AdaptiveInterviewError } from "../../_shared/adaptiveInterviewEngine.ts";
 import { CoachEngineError } from "../../_shared/coachEngine.ts";
 import { IdentityEngineError } from "../../_shared/identityEngine.ts";
 import { SafetyClassificationError, type SafetyClassification, type SafetyTier } from "../../_shared/safetyEngine.ts";
@@ -57,6 +58,26 @@ function depsWithTier(tier: SafetyTier, overrides: Partial<OnboardingTurnDeps> =
         uncertainties: ["The specific area of life where you want to become exceptional is still unclear."],
         confidence: "medium" as const,
       }),
+    chooseNextQuestion: () =>
+      Promise.resolve({
+        psychologicalState: { observed: ["wants to be healthier"], inferred: [], unknown: ["what success feels like"] },
+        question: "When you imagine succeeding, what excites you the most?",
+        options: ["Feeling confident again", "Having more energy", "Being there for my family"],
+        allowFreeText: true,
+        done: false,
+        doneReason: "",
+        meta: { attempts: 1, modelCalled: true },
+      }),
+    ...overrides,
+  };
+}
+
+function adaptiveQuestionRequestBody(overrides: Record<string, unknown> = {}) {
+  return {
+    turn_type: "adaptive_question",
+    first_name: "Maya",
+    becoming_response: "I want to lose weight and be healthy",
+    history: [],
     ...overrides,
   };
 }
@@ -193,6 +214,7 @@ Deno.test("red-team: outbound re-check hard-stops onboarding_beat even when inbo
         moveDowngraded: false,
       }),
     synthesizeUnderstanding: () => Promise.reject(new Error("not used")),
+    chooseNextQuestion: () => Promise.reject(new Error("not used")),
   };
   const res = await handleOnboardingTurn(
     request({
@@ -354,6 +376,7 @@ Deno.test("red-team: outbound re-check hard-stops final_synthesis even when inbo
         uncertainties: ["uncertainty"],
         confidence: "medium" as const,
       }),
+    chooseNextQuestion: () => Promise.reject(new Error("not used")),
   };
   const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
   const body = await res.json();
@@ -370,7 +393,7 @@ Deno.test("fail-closed: final_synthesis's pre-call safety classification failure
 
 Deno.test("fail-closed: final_synthesis's model call failing outright returns 502, never a 200", async () => {
   const deps = depsWithTier("none", {
-    synthesizeUnderstanding: () => Promise.reject(new CoachEngineError("model output was not valid JSON")),
+    synthesizeUnderstanding: () => Promise.reject(new CoachEngineError("malformed_json", "model output was not valid JSON")),
   });
   const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
   assertEquals(res.status, 502);
@@ -378,9 +401,137 @@ Deno.test("fail-closed: final_synthesis's model call failing outright returns 50
   assertEquals(body.understanding, undefined);
 });
 
+Deno.test("fail-closed: a timeout-category failure on final_synthesis returns 504, distinct from other errors", async () => {
+  const deps = depsWithTier("none", {
+    synthesizeUnderstanding: () => Promise.reject(new CoachEngineError("timeout", "exceeded the 60000ms provider budget")),
+  });
+  const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
+  assertEquals(res.status, 504);
+});
+
+Deno.test("an overloaded-category failure on final_synthesis carries error_category in the body — never collapsed into an indistinguishable generic 502", async () => {
+  const deps = depsWithTier("none", {
+    synthesizeUnderstanding: () => Promise.reject(new CoachEngineError("overloaded", "final-synthesis generation failed: 529 Overloaded")),
+  });
+  const res = await handleOnboardingTurn(request(finalSynthesisRequestBody()), deps);
+  assertEquals(res.status, 502);
+  const body = await res.json();
+  assertEquals(body.error_category, "overloaded");
+});
+
 Deno.test("validation: empty vision_canvas is rejected for final_synthesis", async () => {
   const res = await handleOnboardingTurn(
     request(finalSynthesisRequestBody({ vision_canvas: [] })),
+    depsWithTier("none"),
+  );
+  assertEquals(res.status, 400);
+});
+
+// --- adaptive_question (the adaptive-questioning engine — not yet wired
+// into any shipped screen; these tests exercise the endpoint's routing/
+// safety/validation shape the way every other turn type's own suite does) ---
+
+Deno.test("golden: adaptive_question with ordinary content returns 200 and a next question with bounded options", async () => {
+  const res = await handleOnboardingTurn(request(adaptiveQuestionRequestBody()), depsWithTier("none"));
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.safety.hard_stop, false);
+  assertEquals(typeof body.question, "string");
+  assertEquals(Array.isArray(body.options), true);
+  assertEquals(body.done, false);
+  assertEquals(typeof body.request_id, "string");
+});
+
+Deno.test("red-team: elevated tier hard-stops adaptive_question before the engine is ever called", async () => {
+  let engineCalled = false;
+  const deps = depsWithTier("elevated", {
+    chooseNextQuestion: () => {
+      engineCalled = true;
+      return Promise.reject(new Error("should never be called"));
+    },
+  });
+  const res = await handleOnboardingTurn(request(adaptiveQuestionRequestBody()), deps);
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.safety.hard_stop, true);
+  assertEquals(body.question, undefined, "no generated question may reach the response on a hard-stop tier");
+  assertEquals(engineCalled, false, "the engine must never run on a hard-stop tier");
+});
+
+Deno.test("red-team: outbound re-check hard-stops adaptive_question even when inbound was clean", async () => {
+  const deps: OnboardingTurnDeps = {
+    classifyRisk: (text: string) => Promise.resolve({ tier: text.includes("flagged") ? "elevated" : "none", rationaleCode: "test" }),
+    generateInspiration: () => Promise.reject(new Error("not used")),
+    chooseOnboardingBeat: () => Promise.reject(new Error("not used")),
+    synthesizeUnderstanding: () => Promise.reject(new Error("not used")),
+    chooseNextQuestion: () =>
+      Promise.resolve({
+        psychologicalState: { observed: [], inferred: [], unknown: [] },
+        question: "a question the outbound check flagged",
+        options: ["a", "b", "c"],
+        allowFreeText: true,
+        done: false,
+        doneReason: "",
+        meta: { attempts: 1, modelCalled: true },
+      }),
+  };
+  const res = await handleOnboardingTurn(request(adaptiveQuestionRequestBody()), deps);
+  const body = await res.json();
+  assertEquals(body.safety.hard_stop, true, "an outbound-only risk signal must still hard-stop the turn");
+});
+
+Deno.test("adaptive_question with done:true never triggers an outbound safety re-check (nothing generated to screen)", async () => {
+  let classifyRiskCalls = 0;
+  const deps = depsWithTier("none", {
+    classifyRisk: (text: string) => {
+      classifyRiskCalls += 1;
+      return Promise.resolve({ tier: "none" as const, rationaleCode: "test" });
+    },
+    chooseNextQuestion: () =>
+      Promise.resolve({
+        psychologicalState: { observed: [], inferred: [], unknown: [] },
+        question: "",
+        options: [],
+        allowFreeText: false,
+        done: true,
+        doneReason: "reached the turn ceiling",
+        meta: { attempts: 0, modelCalled: false },
+      }),
+  });
+  const res = await handleOnboardingTurn(request(adaptiveQuestionRequestBody()), deps);
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.done, true);
+  assertEquals(classifyRiskCalls, 1, "only the one required inbound classification — no outbound re-check when nothing was generated");
+});
+
+Deno.test("fail-closed: adaptive_question's pre-call safety classification failure returns 503, never proceeds as if safe", async () => {
+  const deps = depsWithTier("none", {
+    classifyRisk: () => Promise.reject(new SafetyClassificationError("boom")),
+  });
+  const res = await handleOnboardingTurn(request(adaptiveQuestionRequestBody()), deps);
+  assertEquals(res.status, 503);
+});
+
+Deno.test("fail-closed: a timeout-category failure on adaptive_question returns 504, distinct from other errors", async () => {
+  const deps = depsWithTier("none", {
+    chooseNextQuestion: () => Promise.reject(new AdaptiveInterviewError("timeout", "exceeded the 45000ms provider budget")),
+  });
+  const res = await handleOnboardingTurn(request(adaptiveQuestionRequestBody()), deps);
+  assertEquals(res.status, 504);
+});
+
+Deno.test("validation: empty becoming_response is rejected for adaptive_question", async () => {
+  const res = await handleOnboardingTurn(
+    request(adaptiveQuestionRequestBody({ becoming_response: "" })),
+    depsWithTier("none"),
+  );
+  assertEquals(res.status, 400);
+});
+
+Deno.test("validation: a malformed history entry is rejected for adaptive_question", async () => {
+  const res = await handleOnboardingTurn(
+    request(adaptiveQuestionRequestBody({ history: [{ question: "Q1" }] })),
     depsWithTier("none"),
   );
   assertEquals(res.status, 400);
