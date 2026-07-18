@@ -10,7 +10,7 @@ import Animated, {
   withDelay,
   withTiming,
 } from "react-native-reanimated";
-import { GradientBackground } from "@/components";
+import { GradientBackground, VersionLabel } from "@/components";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { colors, fontFamily } from "@/theme";
 
@@ -63,6 +63,7 @@ export function ImpulseOpeningScreen({ onComplete }: ImpulseOpeningScreenProps) 
           ))}
         </View>
       )}
+      <VersionLabel />
     </View>
   );
 }

@@ -8,6 +8,7 @@ export { PlaceholderScreen } from "./PlaceholderScreen";
 export { PrimaryButton } from "./PrimaryButton";
 export { ThoughtBubble } from "./ThoughtBubble";
 export { ThoughtStream } from "./ThoughtStream";
+export { VersionLabel } from "./VersionLabel";
 export { VoiceCaptureButton } from "./VoiceCaptureButton";
 export { VoiceOrb } from "./VoiceOrb";
 export type { VoiceOrbState } from "./VoiceOrb";
